@@ -87,7 +87,7 @@ export default function Dashboard() {
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value: number) => formatMoney(value)} />
+              <Tooltip formatter={(value: number | undefined) => formatMoney(value ?? 0)} />
               <Legend />
             </PieChart>
           </ResponsiveContainer>
@@ -105,7 +105,7 @@ export default function Dashboard() {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="data" />
               <YAxis />
-              <Tooltip formatter={(value: number) => formatMoney(value)} />
+              <Tooltip formatter={(value: number | undefined) => formatMoney(value ?? 0)} />
               <Legend />
               <Line type="monotone" dataKey="valor" stroke="#82ca9d" name="Investido" strokeWidth={2} />
             </LineChart>

@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-from backend.processor import ProcessadorExtratos
+from api.processor import ProcessadorExtratos
 from fastapi.middleware.cors import CORSMiddleware
 import io
 
@@ -33,7 +33,7 @@ class ProcessResult(BaseModel):
 def health_check():
     return {"status": "ok", "version": "1.0.0"}
 
-from backend.database import DatabaseManager
+from api.database import DatabaseManager
 
 @app.get("/api/transactions")
 def get_transactions():

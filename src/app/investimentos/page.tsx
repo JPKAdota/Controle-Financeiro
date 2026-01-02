@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertCircle, Calendar } from "lucide-react";
+import { AlertCircle, Calendar, Pencil, X } from "lucide-react";
 
 interface Transaction {
     id: string;
@@ -21,6 +21,16 @@ export default function InvestmentsPage() {
     // Form state
     const [formData, setFormData] = useState({
         data: new Date().toISOString().split('T')[0],
+        descricao: "",
+        valor: "",
+        tipo: "Aporte",
+        data_vencimento: ""
+    });
+
+    // Edit State
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [editFormData, setEditFormData] = useState({
+        data: "",
         descricao: "",
         valor: "",
         tipo: "Aporte",
@@ -70,6 +80,48 @@ export default function InvestmentsPage() {
             fetchInvestments();
         } catch (error) {
             alert("Erro ao adicionar investimento");
+        }
+    };
+
+    const handleEditClick = (t: Transaction) => {
+        setEditingId(t.id);
+        const isAporte = t.tipo === "Despesa" || (t.valor < 0 && t.categoria === "Investimentos");
+
+        setEditFormData({
+            data: t.data ? t.data.split("T")[0] : "",
+            descricao: t.descricao,
+            valor: Math.abs(t.valor).toString(),
+            tipo: isAporte ? "Aporte" : "Resgate",
+            data_vencimento: t.data_vencimento ? t.data_vencimento.split("T")[0] : ""
+        });
+    };
+
+    const handleUpdate = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingId) return;
+
+        const tipoBackend = editFormData.tipo === "Aporte" ? "Despesa" : "Receita";
+        const valorFloat = parseFloat(editFormData.valor.replace(',', '.'));
+
+        const payload = {
+            data: editFormData.data,
+            descricao: editFormData.descricao,
+            valor: Math.abs(valorFloat) * (tipoBackend === 'Despesa' ? -1 : 1),
+            categoria: "Investimentos",
+            tipo: tipoBackend,
+            data_vencimento: editFormData.data_vencimento || null
+        };
+
+        try {
+            await fetch(`/api/transactions/${editingId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            setEditingId(null);
+            fetchInvestments();
+        } catch (error) {
+            alert("Erro ao atualizar investimento");
         }
     };
 
@@ -219,6 +271,7 @@ export default function InvestmentsPage() {
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descrição</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vencimento</th>
                                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Valor</th>
+                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -246,6 +299,14 @@ export default function InvestmentsPage() {
                                         <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${transaction.tipo === 'Despesa' ? 'text-green-600' : 'text-red-600'}`}>
                                             {transaction.tipo === 'Despesa' ? '+' : '-'} {Math.abs(transaction.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                         </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                            <button
+                                                onClick={() => handleEditClick(transaction)}
+                                                className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+                                            >
+                                                <Pencil className="w-5 h-5" />
+                                            </button>
+                                        </td>
                                     </tr>
                                 )
                             })}
@@ -258,7 +319,86 @@ export default function InvestmentsPage() {
                         </tbody>
                     </table>
                 </div>
+
             </div>
+
+            {/* Edit Modal */}
+            {
+                editingId && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full p-6 relative">
+                            <button
+                                onClick={() => setEditingId(null)}
+                                className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                            >
+                                <X className="w-6 h-6" />
+                            </button>
+
+                            <h2 className="text-xl font-bold mb-6 text-gray-900 dark:text-white">Editar Investimento</h2>
+
+                            <form onSubmit={handleUpdate} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Data</label>
+                                    <input
+                                        type="date"
+                                        value={editFormData.data}
+                                        onChange={(e) => setEditFormData({ ...editFormData, data: e.target.value })}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2"
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Descrição</label>
+                                    <input
+                                        type="text"
+                                        value={editFormData.descricao}
+                                        onChange={(e) => setEditFormData({ ...editFormData, descricao: e.target.value })}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2"
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Tipo</label>
+                                    <select
+                                        value={editFormData.tipo}
+                                        onChange={(e) => setEditFormData({ ...editFormData, tipo: e.target.value })}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2"
+                                    >
+                                        <option value="Aporte">Aporte (Investir)</option>
+                                        <option value="Resgate">Resgate (Sacar)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Valor (R$)</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        value={editFormData.valor}
+                                        onChange={(e) => setEditFormData({ ...editFormData, valor: e.target.value })}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2"
+                                        required
+                                    />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Vencimento (Opcional)</label>
+                                    <input
+                                        type="date"
+                                        value={editFormData.data_vencimento}
+                                        onChange={(e) => setEditFormData({ ...editFormData, data_vencimento: e.target.value })}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2"
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    className="md:col-span-2 bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition mt-4"
+                                >
+                                    Salvar Alterações
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                )
+            }
         </div>
     );
 }

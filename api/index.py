@@ -1,4 +1,10 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
+import sys
+import os
+
+# Adiciona o diretório atual ao path para que imports relativos funcionem na Vercel
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from pydantic import BaseModel
 from typing import List, Optional
 from processor import ProcessadorExtratos

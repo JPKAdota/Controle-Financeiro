@@ -5,3 +5,4 @@ pandas
 pdfplumber
 pydantic
 supabase
+python-dotenv

@@ -27,11 +27,8 @@ class ProcessadorExtratos:
                 if palavra in desc_lower:
                     return categoria
         
-        # Se não encontrou, classifica como "Outros" ou pela natureza do valor
-        if valor > 0:
-            return "Receita"
-        else:
-            return "Outras Despesas"
+        # Se não encontrou, classifica como "A Categorizar" para revisão manual
+        return "A Categorizar"
     
     def extrair_texto_pdf(self, arquivo_pdf):
         """Extrai texto de um PDF"""
@@ -52,81 +49,65 @@ class ProcessadorExtratos:
         transacoes = []
         linhas = texto.split('\n')
         
-        # Padrões comuns em extratos bancários
-        padrao_data = r'(\d{2}/\d{2}/\d{4}|\d{2}/\d{2})'
-        padrao_valor = r'R\$\s*([\d.,]+)'
-        padrao_valor_simples = r'([\d.,]+)'
+        # Padrão: DATA DESCRIÇÃO VALOR
+        # Ex: 11/12/2025 PIX QRS CEN -49,13
+        # Ex: 11/12 INTRO AUTO11/12 -49,13 (as vezes a data repete ou tem lixo)
         
-        i = 0
-        while i < len(linhas):
-            linha = linhas[i].strip()
+        # Regex captura: (Data) ... (Descrição) ... (Valor)
+        regex_linha = r'^(\d{2}/\d{2}(?:/\d{4})?)\s+(.*?)\s+(-?[\d.]+(?:,\d{2})?)$'
+        
+        for linha in linhas:
+            linha = linha.strip()
             
-            # Tenta encontrar uma data no início da linha
-            match_data = re.search(padrao_data, linha)
-            if match_data:
-                data = match_data.group(1)
+            # Tenta dar match na linha inteira primeiro
+            match = re.search(regex_linha, linha)
+            
+            if match:
+                data_str = match.group(1)
+                descricao = match.group(2).strip()
+                valor_str = match.group(3)
                 
-                # A descrição geralmente vem depois da data
-                partes = linha.split()
-                descricao_parts = []
-                valor_encontrado = None
-                
-                # Procura pela descrição e valor
-                for parte in partes[1:]:  # Pula a data
-                    # Verifica se é um valor
-                    if re.search(padrao_valor, parte) or (re.search(padrao_valor_simples, parte) and len(parte) > 5):
-                        # Provavelmente é um valor
-                        valor_str = parte.replace('R$', '').replace('.', '').replace(',', '.')
-                        try:
-                            valor = float(valor_str)
-                            valor_encontrado = valor
-                            break
-                        except:
-                            descricao_parts.append(parte)
+                # Se a data não tiver ano, tenta inferir (assumindo ano atual ou anterior)
+                if len(data_str) == 5: # dd/mm
+                    ano_atual = datetime.now().year
+                    # Se o mês for maior que o atual, provavelmente é ano passado
+                    mes = int(data_str.split('/')[1])
+                    if mes > datetime.now().month:
+                        ano = ano_atual - 1
                     else:
-                        descricao_parts.append(parte)
+                        ano = ano_atual
+                    data_str = f"{data_str}/{ano}"
                 
-                descricao = ' '.join(descricao_parts)
-                
-                # Se não encontrou valor nesta linha, tenta na próxima
-                if valor_encontrado is None and i + 1 < len(linhas):
-                    proxima_linha = linhas[i + 1].strip()
-                    match_valor = re.search(padrao_valor, proxima_linha)
-                    if match_valor:
-                        valor_str = match_valor.group(1).replace('.', '').replace(',', '.')
-                        try:
-                            valor_encontrado = float(valor_str)
-                            i += 1  # Pula a próxima linha
-                        except:
-                            pass
-                
-                if valor_encontrado is not None and descricao:
-                    # Determina se é débito ou crédito (simplificado)
-                    # Em PDFs, geralmente valores negativos têm indicação ou estão em seções diferentes
-                    # Vamos considerar negativo por padrão para despesas
-                    if any(palavra in descricao.lower() for palavra in ['pagamento', 'compra', 'debito', 'tarifa']):
-                        valor_encontrado = -abs(valor_encontrado)
-                    elif any(palavra in descricao.lower() for palavra in ['deposito', 'credito', 'salario', 'rendimento']):
-                        valor_encontrado = abs(valor_encontrado)
-                    else:
-                        # Se não conseguiu determinar, assume negativo (mais comum em extratos)
-                        valor_encontrado = -abs(valor_encontrado)
+                try:
+                    # Limpa formato do valor (1.000,00 -> 1000.00)
+                    valor_limpo = valor_str.replace('.', '').replace(',', '.')
+                    valor = float(valor_limpo)
                     
-                    categoria = self.categorizar_transacao(descricao, valor_encontrado)
+                    # Remove datas extras que as vezes aparecem na descrição
+                    # Ex: "DESCRIÇÃO 11/12"
+                    descricao = re.sub(r'\d{2}/\d{2}$', '', descricao).strip()
+                    
+                    # IGNORAR LINHAS DE SALDO
+                    # "SALDO DO DIA", "SALDO APLIC AUT", etc não são transações reais de entrada/saída
+                    if "SALDO" in descricao.upper():
+                        continue
+                    
+                    categoria = self.categorizar_transacao(descricao, valor)
                     
                     transacao = {
-                        'data': data,
+                        'data': data_str,
                         'descricao': descricao,
-                        'valor': valor_encontrado,
+                        'valor': valor,
                         'categoria': categoria,
-                        'tipo': 'Receita' if valor_encontrado > 0 else 'Despesa',
+                        'tipo': 'Receita' if valor > 0 else 'Despesa',
                         'fonte': 'PDF'
                     }
-                    
                     transacoes.append(transacao)
-            
-            i += 1
-        
+                    
+                except Exception as e:
+                    # Se falhar conversão, pula
+                    continue
+                    
         return transacoes
     
     def processar_pdf(self, arquivo_pdf):
@@ -244,15 +225,39 @@ class ProcessadorExtratos:
         if df_transacoes is None or df_transacoes.empty:
             return None
         
-        receitas = df_transacoes[df_transacoes['tipo'] == 'Receita']['valor'].sum()
-        despesas = df_transacoes[df_transacoes['tipo'] == 'Despesa']['valor'].sum()
-        saldo = receitas - abs(despesas)
+        # Filtra transações
+        transacoes_invest = df_transacoes[df_transacoes['categoria'] == 'Investimentos']
+        transacoes_comuns = df_transacoes[df_transacoes['categoria'] != 'Investimentos']
         
+        # Receitas e Despesas (Operacionais - Sem Investimentos)
+        receitas_op = transacoes_comuns[transacoes_comuns['tipo'] == 'Receita']['valor'].sum()
+        despesas_op = transacoes_comuns[transacoes_comuns['tipo'] == 'Despesa']['valor'].sum()
+        
+        # Fluxo de Investimentos
+        # Aplicação = Dinheiro saindo da conta (-), mas é positivo para o patrimônio
+        aplicacoes = transacoes_invest[transacoes_invest['tipo'] == 'Despesa']['valor'].sum()
+        # Resgate = Dinheiro entrando (+), mas não é renda nova
+        resgates = transacoes_invest[transacoes_invest['tipo'] == 'Receita']['valor'].sum()
+        
+        # Saldo Líquido da Conta (Esse considera TUDO: Salário - Gastos - Investimentos)
+        saldo_conta = df_transacoes['valor'].sum()
+        
+        # Taxa de Poupança: (Saldo Operacional + Aplicações) / Receita Operacional
+        # Quanto do que eu ganhei (Salário) eu não gastei (Sobrou na conta ou Investi)
+        sobra_operacional = receitas_op - abs(despesas_op)
+        
+        try:
+            taxa_poupanca = ((sobra_operacional) / receitas_op * 100) if receitas_op > 0 else 0
+        except:
+            taxa_poupanca = 0
+            
         metricas = {
-            'receitas_total': receitas,
-            'despesas_total': abs(despesas),
-            'saldo': saldo,
-            'taxa_poupanca': (saldo / receitas * 100) if receitas > 0 else 0,
+            'receitas_total': receitas_op,       # Apenas ganhos reais (Salário, etc)
+            'despesas_total': abs(despesas_op),  # Apenas gastos reais (Mercado, Luz...)
+            'saldo': saldo_conta,                # Saldo final da conta corrente
+            'investimentos_total': abs(aplicacoes), # Quanto eu investi esse mês
+            'investimentos_resgates': resgates,
+            'taxa_poupanca': taxa_poupanca,
             'total_transacoes': len(df_transacoes)
         }
         

@@ -1,109 +1,117 @@
 "use client";
-
 import { useEffect, useState } from "react";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Legend
+} from "recharts";
 
-interface Transaction {
-  data: string;
-  descricao: string;
-  valor: number;
-  categoria: string;
-  tipo: string;
+interface DashboardData {
+  expenses_by_category: { name: string; value: number }[];
+  investments_evolution: { data: string; valor: number }[];
+  metrics?: {
+    receitas: number;
+    despesas: number;
+    saldo: number;
+    investido: number;
+  };
 }
 
-export default function Home() {
-  const [data, setData] = useState<Transaction[]>([]);
-  const [loading, setLoading] = useState(true);
+const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8", "#82ca9d"];
+
+export default function Dashboard() {
+  const [data, setData] = useState<DashboardData | null>(null);
 
   useEffect(() => {
-    fetch("/api/transactions")
+    fetch("/api/dashboard-charts")
       .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setData(data);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setLoading(false);
-      });
+      .then((data) => setData(data));
   }, []);
 
-  const totalReceitas = data
-    .filter((t) => t.tipo === "Receita")
-    .reduce((acc, curr) => acc + curr.valor, 0);
+  if (!data) return <div className="text-center p-10">Carregando gráficos...</div>;
 
-  const totalDespesas = data
-    .filter((t) => t.tipo === "Despesa")
-    .reduce((acc, curr) => acc + Math.abs(curr.valor), 0);
+  const metrics = data.metrics || { receitas: 0, despesas: 0, saldo: 0, investido: 0 };
 
-  const saldo = totalReceitas - totalDespesas;
+  // Helper para formatar moeda
+  const formatMoney = (val: number) =>
+    val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
   return (
-    <div className="space-y-6 px-4">
-      <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
+    <div className="space-y-6">
+      <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Relatório Financeiro</h1>
 
-      {/* Cards */}
+      {/* Cards de Métricas (Restaurados) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
-          <h3 className="text-gray-500 text-sm font-medium">Receitas</h3>
-          <p className="text-2xl font-bold text-green-600">
-            R$ {totalReceitas.toFixed(2)}
-          </p>
+        <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow border-l-4 border-green-500">
+          <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400">Receitas</h2>
+          <p className="text-2xl font-bold text-green-600">{formatMoney(metrics.receitas)}</p>
         </div>
-        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-red-500">
-          <h3 className="text-gray-500 text-sm font-medium">Despesas</h3>
-          <p className="text-2xl font-bold text-red-600">
-            R$ {totalDespesas.toFixed(2)}
-          </p>
+        <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow border-l-4 border-red-500">
+          <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400">Despesas</h2>
+          <p className="text-2xl font-bold text-red-600">{formatMoney(metrics.despesas)}</p>
         </div>
-        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
-          <h3 className="text-gray-500 text-sm font-medium">Saldo</h3>
-          <p className={`text-2xl font-bold ${saldo >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
-            R$ {saldo.toFixed(2)}
+        <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow border-l-4 border-blue-500">
+          <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400">Saldo (Caixa)</h2>
+          <p className={`text-2xl font-bold ${metrics.saldo >= 0 ? 'text-blue-600' : 'text-red-500'}`}>
+            {formatMoney(metrics.saldo)}
           </p>
         </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900">Últimas Transações</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        {/* Gráfico de Pizza - Despesas */}
+        <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow h-96">
+          <h2 className="text-lg font-medium mb-4 text-gray-900 dark:text-gray-100">Despesas por Categoria</h2>
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={data.expenses_by_category}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                outerRadius={100}
+                fill="#8884d8"
+                dataKey="value"
+              >
+                {data.expenses_by_category.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value: number) => formatMoney(value)} />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descrição</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Categoria</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Valor</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {loading ? (
-                <tr><td colSpan={4} className="px-6 py-4 text-center">Carregando...</td></tr>
-              ) : data.length === 0 ? (
-                <tr><td colSpan={4} className="px-6 py-4 text-center">Nenhuma transação encontrada.</td></tr>
-              ) : (
-                data.map((t, idx) => (
-                  <tr key={idx}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{t.data}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{t.descricao}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
-                        {t.categoria}
-                      </span>
-                    </td>
-                    <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>
-                      {t.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+
+        {/* Gráfico de Linha - Investimentos */}
+        <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow h-96">
+          <h2 className="text-lg font-medium mb-4 text-gray-900 dark:text-gray-100">Evolução dos Investimentos</h2>
+          <p className="text-sm text-gray-500 mb-2">Total Acumulado: {formatMoney(metrics.investido)}</p>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={data.investments_evolution}
+              margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="data" />
+              <YAxis />
+              <Tooltip formatter={(value: number) => formatMoney(value)} />
+              <Legend />
+              <Line type="monotone" dataKey="valor" stroke="#82ca9d" name="Investido" strokeWidth={2} />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
+
       </div>
     </div>
   );

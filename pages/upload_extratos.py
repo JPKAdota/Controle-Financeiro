@@ -43,7 +43,7 @@ if uploaded_file is not None:
         try:
             df_preview = pd.read_csv(uploaded_file)
             st.write(f"**Formato:** {df_preview.shape[0]} linhas × {df_preview.shape[1]} colunas")
-            st.dataframe(df_preview.head(10), use_container_width=True)
+            st.dataframe(df_preview.head(10), width="stretch")
         except Exception as e:
             st.error(f"❌ Erro ao ler CSV: {e}")
     
@@ -64,57 +64,75 @@ if uploaded_file is not None:
             df_processado = processador.processar_arquivo(uploaded_file)
             
             if df_processado is not None and not df_processado.empty:
-                st.success(f"✅ Análise concluída! {len(df_processado)} transações processadas.")
+                # Separa o que precisa de revisão
+                df_precisa_revisao = df_processado[df_processado['categoria'] == 'A Categorizar']
+                df_ok = df_processado[df_processado['categoria'] != 'A Categorizar']
                 
-                # Calcula métricas
-                metricas = processador.calcular_metricas(df_processado)
-                
-                # Mostra resultados
-                st.subheader("📈 Resultados da Análise")
-                
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("Total Receitas", f"R$ {metricas['receitas_total']:,.2f}")
-                
-                with col2:
-                    st.metric("Total Despesas", f"R$ {metricas['despesas_total']:,.2f}")
-                
-                with col3:
-                    st.metric("Saldo", f"R$ {metricas['saldo']:,.2f}")
-                
-                with col4:
-                    st.metric("Taxa Poupança", f"{metricas['taxa_poupanca']:.1f}%")
-                
-                # Transações processadas
-                st.subheader(f"💳 {len(df_processado)} Transações Categorizadas")
-                st.dataframe(df_processado, use_container_width=True)
-                
-                # Gráfico de categorias
-                st.subheader("📊 Distribuição por Categoria")
-                
-                if not df_processado.empty:
-                    gastos_por_categoria = df_processado[df_processado['tipo'] == 'Despesa'].groupby('categoria')['valor'].sum().abs()
-                    
-                    if not gastos_por_categoria.empty:
-                        df_categorias = pd.DataFrame({
-                            'Categoria': gastos_por_categoria.index,
-                            'Valor': gastos_por_categoria.values
-                        })
-                        
-                        import plotly.express as px
-                        fig = px.pie(df_categorias, values='Valor', names='Categoria', 
-                                    title='Gastos por Categoria')
-                        st.plotly_chart(fig, use_container_width=True)
-                
-                # Salva na sessão para usar em outras páginas
-                st.session_state.df_transacoes = df_processado
-                st.session_state.metricas = metricas
-                
-                st.balloons()
+                # Estado temporário para revisão
+                st.session_state['df_revisao'] = df_precisa_revisao
+                st.session_state['df_ok'] = df_ok
+                st.session_state['revisao_ativa'] = True
                 
             else:
                 st.error("❌ Não foi possível processar o arquivo. Verifique o formato.")
+
+    # --- Área de Revisão de Categorias ---
+    if st.session_state.get('revisao_ativa'):
+        st.markdown("---")
+        st.subheader("🕵️‍♀️ Revisão Necessária")
+        
+        df_revisao = st.session_state['df_revisao']
+        df_ok = st.session_state['df_ok']
+        
+        qtde_pendente = len(df_revisao)
+        qtde_ok = len(df_ok)
+        
+        if qtde_pendente > 0:
+            st.warning(f"⚠️ Encontramos **{qtde_pendente}** transações que não conseguimos identificar automaticamente.")
+            st.markdown("Por favor, categorize-as abaixo antes de continuar:")
+            
+            # Editor para categorização manual
+            column_config = {
+                "categoria": st.column_config.SelectboxColumn(
+                    "Categoria",
+                    options=["Comida", "Transporte", "Moradia", "Lazer", "Saúde", "Educação", "Investimentos", "Salário", "Outros"],
+                    required=True
+                )
+            }
+            
+            df_revisado = st.data_editor(
+                df_revisao,
+                column_config=column_config,
+                width="stretch",
+                key="editor_revisao",
+                disabled=["data", "descricao", "valor", "tipo"] # Bloqueia outros campos
+            )
+        else:
+            st.success("✅ Todas as transações foram identificadas automaticamente!")
+            df_revisado = df_revisao # Vazio
+
+        # Botão Final de Confirmação
+        if st.button("💾 Confirmar e Salvar Tudo", type="primary"):
+            # Junta tudo
+            df_final = pd.concat([df_ok, df_revisado], ignore_index=True)
+            
+            # Salva na sessão
+            if 'df_transacoes' not in st.session_state:
+                st.session_state.df_transacoes = pd.DataFrame()
+            
+            st.session_state.df_transacoes = pd.concat([st.session_state.df_transacoes, df_final], ignore_index=True)
+            
+            # Recalcula métricas globais
+            metricas = processador.calcular_metricas(st.session_state.df_transacoes)
+            st.session_state.metricas = metricas
+            
+            st.success(f"🎉 Sucesso! {len(df_final)} transações adicionadas ao seu controle.")
+            
+            # Limpa estado de revisão
+            del st.session_state['revisao_ativa']
+            del st.session_state['df_revisao']
+            del st.session_state['df_ok']
+            st.rerun()
 else:
     st.info("👆 **Selecione um arquivo PDF ou CSV para começar a análise**")
 

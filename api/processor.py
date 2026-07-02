@@ -2,6 +2,7 @@ import pandas as pd
 from datetime import datetime
 import re
 import pdfplumber
+import PyPDF2
 import io
 
 class ProcessadorExtratos:
@@ -29,36 +30,117 @@ class ProcessadorExtratos:
         return "A Categorizar"
     
     def extrair_texto_pdf(self, arquivo_bytes):
-        """Extrai texto de um PDF"""
+        """Extrai texto de um PDF usando pdfplumber ou PyPDF2 fallback"""
+        import warnings
+        texto_pdfplumber = ""
+        
+        # 1. Tenta com pdfplumber (suprimindo warnings de fonte)
         try:
-            texto_completo = ""
-            with pdfplumber.open(io.BytesIO(arquivo_bytes)) as pdf:
-                for pagina in pdf.pages:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                with pdfplumber.open(io.BytesIO(arquivo_bytes)) as pdf:
+                    for pagina in pdf.pages:
+                        try:
+                            texto = pagina.extract_text()
+                            if texto:
+                                texto_pdfplumber += texto + "\n"
+                        except Exception:
+                            continue  # Pula páginas problemáticas
+        except Exception as e:
+            print(f"Aviso: pdfplumber falhou completamente ({e})")
+        
+        # 2. Se pdfplumber conseguiu texto útil, retorna
+        if len(texto_pdfplumber.strip()) > 20:
+            print(f"pdfplumber extraiu {len(texto_pdfplumber)} caracteres")
+            return texto_pdfplumber
+        
+        # 3. Fallback: PyPDF2 (mais tolerante com fontes problemáticas como Neon)
+        print("pdfplumber não extraiu texto suficiente, tentando PyPDF2...")
+        texto_pypdf2 = ""
+        try:
+            leitor = PyPDF2.PdfReader(io.BytesIO(arquivo_bytes))
+            for pagina in leitor.pages:
+                try:
                     texto = pagina.extract_text()
                     if texto:
-                        texto_completo += texto + "\n"
-            return texto_completo
+                        texto_pypdf2 += texto + "\n"
+                except Exception:
+                    continue
         except Exception as e:
-            print(f"Erro ao extrair texto do PDF: {e}")
-            return ""
+            print(f"Erro no fallback PyPDF2: {e}")
+        
+        print(f"PyPDF2 extraiu {len(texto_pypdf2)} caracteres")
+        return texto_pypdf2
     
     def parsear_transacoes_pdf(self, texto):
-        """Parseia transações de texto de PDF bancário"""
+        """Parseia transações de texto de PDF bancário cruzando lógicas flexíveis"""
         transacoes = []
-        linhas = texto.split('\n')
         
-        regex_linha = r'^(\d{2}/\d{2}(?:/\d{4})?)\s+(.*?)\s+(-?[\d.]+(?:,\d{2})?)$'
+        # Limpa caracteres nulos (o Neon usa \x00 como separador em vários lugares)
+        # Substitui \x00 por espaço para normalizar, MAS preserva o padrão de negativo
+        # No Neon, negativo aparece como "\x00R$" (null antes do R$)
+        # Primeiro marca os negativos, depois limpa os nulls
+        texto_limpo = texto.replace('\x00R$', '-R$')  # Marca negativos do Neon
+        texto_limpo = texto_limpo.replace('\x00', ' ')  # Limpa nulls restantes (ex: hora)
+        
+        linhas = texto_limpo.split('\n')
+        
+        # Regex para formato Neon: DESCRIÇÃO DD/MM/YYYY HH:MM [-]R$ VALOR R$ SALDO CARTÃO
+        # Exemplo: "TED recebido de TECH4HUMANS... 06/02/2026 07 35 R$ 3.325,89 R$ 3.325,89 -"
+        # Exemplo negativo: "PIX enviado para NATALIA... 06/02/2026 10 37 -R$ 3.325,89 R$ 0,00 -"
+        regex_neon = r'^(.+?)\s+(\d{2}/\d{2}/\d{4})\s+\d{2}\s*\d{2}\s+(-?)R\$\s*([\d.,]+)\s+R\$\s*[\d.,]+\s+-$'
+        
+        # Regex genérica (outros bancos): DATA DESCRIÇÃO VALOR
+        regex_generica = r'(?:^|\s)(\d{2}[/-]\d{2}(?:[/-]\d{2,4})?)\s+(.*?)\s+(?:R\$?\s*)?(-?\s*[\d.]+(?:,\d{2})?)$'
         
         for linha in linhas:
             linha = linha.strip()
-            match = re.search(regex_linha, linha)
+            if not linha or len(linha) < 10:
+                continue
             
-            if match:
-                data_str = match.group(1)
-                descricao = match.group(2).strip()
-                valor_str = match.group(3)
+            # Tenta Neon primeiro
+            match_neon = re.search(regex_neon, linha)
+            if match_neon:
+                descricao = match_neon.group(1).strip()
+                data_str = match_neon.group(2)
+                sinal_negativo = match_neon.group(3)  # "-" ou ""
+                valor_str = match_neon.group(4)
                 
-                if len(data_str) == 5: 
+                try:
+                    valor_limpo = valor_str.replace('.', '').replace(',', '.')
+                    valor = float(valor_limpo)
+                    
+                    if sinal_negativo == '-':
+                        valor = -abs(valor)
+                    
+                    # Pula linhas de cabeçalho/saldo/lixo
+                    if "SALDO" in descricao.upper() or valor == 0:
+                        continue
+                    if len(descricao) < 5 or descricao.replace(' ', '').isdigit():
+                        continue  # Pula descrições muito curtas ou só números (cabeçalho)
+                    
+                    categoria = self.categorizar_transacao(descricao, valor)
+                    
+                    transacoes.append({
+                        'data': data_str,
+                        'descricao': descricao,
+                        'valor': valor,
+                        'categoria': categoria,
+                        'tipo': 'Receita' if valor > 0 else 'Despesa',
+                        'fonte': 'PDF'
+                    })
+                except Exception:
+                    continue
+                continue  # Já achou match Neon, pula pro próximo
+            
+            # Fallback: regex genérica (outros bancos)
+            match_gen = re.search(regex_generica, linha)
+            if match_gen:
+                data_str = match_gen.group(1).replace('-', '/')
+                descricao = match_gen.group(2).strip()
+                valor_str = match_gen.group(3)
+                
+                if len(data_str) == 5:
                     ano_atual = datetime.now().year
                     mes = int(data_str.split('/')[1])
                     if mes > datetime.now().month:
@@ -68,12 +150,16 @@ class ProcessadorExtratos:
                     data_str = f"{data_str}/{ano}"
                 
                 try:
+                    valor_str = valor_str.replace(' ', '')
                     valor_limpo = valor_str.replace('.', '').replace(',', '.')
                     valor = float(valor_limpo)
+                    
                     descricao = re.sub(r'\d{2}/\d{2}$', '', descricao).strip()
                     
                     if "SALDO" in descricao.upper():
                         continue
+                    if len(descricao) < 5 or descricao.replace(' ', '').isdigit():
+                        continue  # Pula descrições curtas ou só números (cabeçalho)
                     
                     categoria = self.categorizar_transacao(descricao, valor)
                     
@@ -101,7 +187,10 @@ class ProcessadorExtratos:
             
             transacoes = self.parsear_transacoes_pdf(texto)
             if not transacoes:
-                raise Exception("Não foi possível identificar transações no PDF")
+                # Retorna algumas linhas do PDF para debug se a regex falhar em tudo
+                linhas_validas = [l.strip() for l in texto.split('\n') if len(l.strip()) > 5]
+                amostra = " | ".join(linhas_validas[:5])
+                raise Exception(f"Não foi possível identificar transações no PDF. Formato do texto extraído: {amostra}")
             
             return transacoes # Retorna lista de dicts
             

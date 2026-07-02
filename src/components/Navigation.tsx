@@ -38,6 +38,12 @@ export default function Navigation() {
                                     Investimentos
                                 </Link>
                                 <Link
+                                    href="/agente"
+                                    className={`rounded-md px-3 py-2 text-sm font-medium ${isActive("/agente")}`}
+                                >
+                                    🤖 Agente IA
+                                </Link>
+                                <Link
                                     href="/categorias"
                                     className={`rounded-md px-3 py-2 text-sm font-medium ${isActive("/categorias")}`}
                                 >

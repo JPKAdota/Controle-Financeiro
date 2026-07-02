@@ -76,6 +76,17 @@ class ProcessadorExtratos:
         """Parseia transações de texto de PDF bancário cruzando lógicas flexíveis"""
         transacoes = []
         
+        # Detecta se é fatura de cartão de crédito
+        texto_upper = texto.upper()
+        eh_fatura = any(termo in texto_upper for termo in [
+            "LIMITES DE CRÉDITO", "LIMITE DE CRÉDITO", "LIMITE TOTAL DE CRÉDITO", 
+            "RESUMO DA FATURA", "TOTAL DESTA FATURA", "TOTAL DA FATURA", 
+            "LANÇAMENTOS: COMPRAS E SAQUES", "COMPRAS E SAQUES", "PAGAMENTO MÍNIMO",
+            "ENCARGOS COBRADOS NESTA FATURA"
+        ])
+        if eh_fatura:
+            print("Detectado formato de fatura de cartão de crédito. Ajustando sinais...")
+            
         # Limpa caracteres nulos (o Neon usa \x00 como separador em vários lugares)
         # Substitui \x00 por espaço para normalizar, MAS preserva o padrão de negativo
         # No Neon, negativo aparece como "\x00R$" (null antes do R$)
@@ -112,6 +123,11 @@ class ProcessadorExtratos:
                     
                     if sinal_negativo == '-':
                         valor = -abs(valor)
+                    
+                    # Se for fatura de cartão, inverte o sinal do valor:
+                    # Compras (positivo na fatura) viram débito (-) e pagamentos (negativo) viram crédito (+)
+                    if eh_fatura:
+                        valor = -valor
                     
                     # Pula linhas de cabeçalho/saldo/lixo
                     if "SALDO" in descricao.upper() or valor == 0:
@@ -153,6 +169,10 @@ class ProcessadorExtratos:
                     valor_str = valor_str.replace(' ', '')
                     valor_limpo = valor_str.replace('.', '').replace(',', '.')
                     valor = float(valor_limpo)
+                    
+                    # Se for fatura de cartão, inverte o sinal do valor
+                    if eh_fatura:
+                        valor = -valor
                     
                     descricao = re.sub(r'\d{2}/\d{2}$', '', descricao).strip()
                     

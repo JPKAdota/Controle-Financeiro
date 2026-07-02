@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 import sys
 import os
 
@@ -12,6 +12,14 @@ from fastapi.middleware.cors import CORSMiddleware
 import io
 
 app = FastAPI()
+
+# --- Imports dos novos serviços ---
+from market_service import (
+    get_stock_quotes, get_macro_indicators, get_stock_history,
+    get_stock_dividends, get_fii_dividends, get_crypto_quotes, search_tickers
+)
+from chat_service import chat_with_agent, get_suggested_questions
+from simulator_service import simulate_investment, compare_scenarios
 
 app.add_middleware(
     CORSMiddleware,
@@ -150,3 +158,138 @@ async def process_upload(file: UploadFile = File(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================
+# AGENTE DE INVESTIMENTOS — NOVOS ENDPOINTS
+# =============================================
+
+# --- MERCADO ---
+
+@app.get("/api/market/quotes")
+async def market_quotes(symbols: str = Query(default="PETR4,VALE3,ITUB4,MGLU3")):
+    """Busca cotações de ações. Symbols separados por vírgula."""
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return await get_stock_quotes(symbol_list)
+
+
+@app.get("/api/market/indicators")
+async def market_indicators():
+    """Retorna indicadores macroeconômicos (Selic, CDI, IPCA, Ibovespa, Dólar)."""
+    return await get_macro_indicators()
+
+
+@app.get("/api/market/history/{symbol}")
+async def market_history(symbol: str, range: str = Query(default="1mo", alias="range")):
+    """Retorna histórico de preços de um ativo."""
+    return await get_stock_history(symbol.upper(), range)
+
+
+@app.get("/api/market/dividends/{symbol}")
+async def market_dividends(symbol: str):
+    """Retorna dividendos e JCP de uma ação."""
+    return await get_stock_dividends(symbol.upper())
+
+
+@app.get("/api/market/fii")
+async def market_fii(symbols: str = Query(default="MXRF11,HGLG11,XPML11,KNRI11")):
+    """Busca rendimentos de FIIs."""
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return await get_fii_dividends(symbol_list)
+
+
+@app.get("/api/market/crypto")
+async def market_crypto(symbols: str = Query(default="BTC,ETH,SOL")):
+    """Busca cotações de criptomoedas."""
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return await get_crypto_quotes(symbol_list)
+
+
+@app.get("/api/market/tickers")
+async def market_tickers(search: str = Query(default=""), type: str = Query(default="")):
+    """Busca e filtra tickers disponíveis na B3."""
+    return await search_tickers(search, type)
+
+
+# --- CHAT IA ---
+
+class ChatRequest(BaseModel):
+    message: str
+    context: Optional[dict] = None
+    history: Optional[list] = None
+
+
+@app.post("/api/agent/chat")
+async def agent_chat(req: ChatRequest):
+    """Chat com o assistente de investimentos IA."""
+    # Se contexto não foi enviado, buscar dados do usuário automaticamente
+    context = req.context
+    if not context:
+        try:
+            db = DatabaseManager()
+            dashboard_data = db.get_dashboard_data()
+            transactions = db.get_transactions()
+            investments = [
+                t for t in transactions
+                if t.get("categoria") == "Investimentos" or t.get("tipo") == "Investimento"
+            ]
+            context = {
+                "metrics": dashboard_data.get("metrics", {}),
+                "investments": investments[:10],
+            }
+        except Exception:
+            context = {}
+
+    return await chat_with_agent(
+        message=req.message,
+        context=context,
+        history=req.history,
+    )
+
+
+@app.get("/api/agent/suggestions")
+def agent_suggestions():
+    """Retorna sugestões de perguntas para o chat."""
+    return {"suggestions": get_suggested_questions()}
+
+
+# --- SIMULADOR ---
+
+class SimulateRequest(BaseModel):
+    aporte_inicial: float = 0
+    aporte_mensal: float = 0
+    taxa_anual: float = 12.0
+    meses: int = 12
+    indexador: str = "pre"
+    taxa_indexador: float = 0.0
+
+
+@app.post("/api/agent/simulate")
+def agent_simulate(req: SimulateRequest):
+    """Simula a evolução de um investimento."""
+    if req.meses < 1 or req.meses > 600:
+        raise HTTPException(status_code=400, detail="Período deve ser entre 1 e 600 meses")
+    if req.aporte_inicial < 0 or req.aporte_mensal < 0:
+        raise HTTPException(status_code=400, detail="Valores de aporte não podem ser negativos")
+
+    return simulate_investment(
+        aporte_inicial=req.aporte_inicial,
+        aporte_mensal=req.aporte_mensal,
+        taxa_anual=req.taxa_anual,
+        meses=req.meses,
+        indexador=req.indexador,
+        taxa_indexador=req.taxa_indexador,
+    )
+
+
+class CompareRequest(BaseModel):
+    scenarios: list[dict]
+
+
+@app.post("/api/agent/compare")
+def agent_compare(req: CompareRequest):
+    """Compara múltiplos cenários de investimento."""
+    if len(req.scenarios) < 1 or len(req.scenarios) > 3:
+        raise HTTPException(status_code=400, detail="Envie entre 1 e 3 cenários")
+    return compare_scenarios(req.scenarios)
+

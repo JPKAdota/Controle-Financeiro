@@ -1,14 +1,18 @@
 """
 Serviço de chat IA para o Agente de Investimentos.
-Usa Google Gemini (gemini-2.5-flash) com contexto financeiro do usuário.
+Usa Ollama local por padrão e mantém Gemini como provedor opcional.
 """
 
 import os
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+AI_PROVIDER = os.environ.get("AI_PROVIDER", "ollama").lower()
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
 
 # Flag para saber se o SDK está disponível
 _genai_available = False
@@ -79,7 +83,60 @@ def _build_context_message(context: dict) -> str:
     return "\n".join(parts)
 
 
-async def chat_with_agent(message: str, context: dict = None, history: list = None) -> dict:
+def _build_ollama_messages(message: str, context: dict, history: list) -> list[dict[str, str]]:
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for msg in (history or [])[-10:]:
+        role = "assistant" if msg.get("role") == "assistant" else "user"
+        content = str(msg.get("content", "")).strip()
+        if content:
+            messages.append({"role": role, "content": content})
+
+    context_str = _build_context_message(context) if context else ""
+    messages.append({"role": "user", "content": f"{message}{context_str}"})
+    return messages
+
+
+async def _chat_with_ollama(message: str, context: dict, history: list) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
+                json={
+                    "model": OLLAMA_MODEL,
+                    "messages": _build_ollama_messages(message, context, history),
+                    "stream": False,
+                    "options": {"temperature": 0.4},
+                },
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            response_text = response_data.get("message", {}).get("content", "").strip()
+
+            if not response_text:
+                raise ValueError("Ollama retornou uma resposta vazia.")
+
+            return {"response": response_text, "error": None}
+    except httpx.ConnectError:
+        return {
+            "response": (
+                "⚠️ Ollama não está disponível. Inicie o serviço e baixe o modelo "
+                f"`{OLLAMA_MODEL}`."
+            ),
+            "error": "ollama_unavailable",
+        }
+    except httpx.TimeoutException:
+        return {
+            "response": "⏳ O modelo demorou demais para responder. Tente novamente.",
+            "error": "ollama_timeout",
+        }
+    except Exception as exc:
+        return {
+            "response": f"❌ Erro ao processar sua mensagem: {exc}",
+            "error": "generation_error",
+        }
+
+
+async def _chat_with_gemini(message: str, context: dict, history: list) -> dict:
     """
     Envia mensagem para o Gemini e retorna resposta.
     
@@ -159,6 +216,13 @@ async def chat_with_agent(message: str, context: dict = None, history: list = No
             "response": f"❌ Erro ao processar sua mensagem: {error_msg}",
             "error": "generation_error"
         }
+
+
+async def chat_with_agent(message: str, context: dict = None, history: list = None) -> dict:
+    """Envia mensagem ao provedor configurado e retorna resposta compatível com o frontend."""
+    if AI_PROVIDER == "gemini":
+        return await _chat_with_gemini(message, context, history)
+    return await _chat_with_ollama(message, context, history)
 
 
 def get_suggested_questions() -> list[str]:

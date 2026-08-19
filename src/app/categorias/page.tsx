@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api";
 
 interface Category {
     id: string;
@@ -20,11 +21,8 @@ export default function CategoriesPage() {
 
     const fetchCategories = async () => {
         try {
-            const res = await fetch("/api/categories");
-            if (res.ok) {
-                const data = await res.json();
-                setCategories(data || []);
-            }
+            const data = await apiFetch<Category[]>("/api/categories");
+            setCategories(data || []);
         } catch (error) {
             console.error("Erro ao buscar categorias", error);
         } finally {
@@ -37,14 +35,14 @@ export default function CategoriesPage() {
         try {
             if (editingId) {
                 // Update
-                await fetch(`/api/categories/${editingId}`, {
+                await apiFetch(`/api/categories/${editingId}`, {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(formData),
                 });
             } else {
                 // Create
-                await fetch("/api/categories", {
+                await apiFetch("/api/categories", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(formData),
@@ -72,7 +70,7 @@ export default function CategoriesPage() {
     const handleDelete = async (id: string) => {
         if (!confirm("Tem certeza?")) return;
         try {
-            await fetch(`/api/categories/${id}`, { method: "DELETE" });
+            await apiFetch(`/api/categories/${id}`, { method: "DELETE" });
             fetchCategories();
         } catch (error) {
             alert("Erro ao deletar");

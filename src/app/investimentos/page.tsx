@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AlertCircle, Calendar, Pencil, X } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
 interface Transaction {
     id: string;
@@ -43,8 +44,7 @@ export default function InvestmentsPage() {
 
     const fetchInvestments = () => {
         setLoading(true);
-        fetch("/api/transactions")
-            .then((res) => res.json())
+        apiFetch<Transaction[]>("/api/transactions")
             .then((data) => {
                 const investments = data.filter(
                     (t: Transaction) => t.categoria === "Investimentos" || t.tipo === "Investimento"
@@ -71,7 +71,7 @@ export default function InvestmentsPage() {
         };
 
         try {
-            await fetch("/api/transactions", {
+            await apiFetch("/api/transactions", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
@@ -113,7 +113,7 @@ export default function InvestmentsPage() {
         };
 
         try {
-            await fetch(`/api/transactions/${editingId}`, {
+            await apiFetch(`/api/transactions/${editingId}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),

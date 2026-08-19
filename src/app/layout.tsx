@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   description: "Gerenciado por IA",
 };
 
-import Navigation from "@/components/Navigation";
+import AuthGuard from "@/components/AuthGuard";
 
 export default function RootLayout({
   children,
@@ -21,10 +21,7 @@ export default function RootLayout({
       <body
         className={`${inter.className} min-h-screen bg-gray-50 dark:bg-gray-900`}
       >
-        <Navigation />
-        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-          {children}
-        </main>
+        <AuthGuard>{children}</AuthGuard>
       </body>
     </html>
   );

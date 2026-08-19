@@ -28,6 +28,13 @@ class ProcessadorExtratos:
                     return categoria
         
         return "A Categorizar"
+
+    @staticmethod
+    def _parsear_valor(valor) -> float:
+        valor_str = str(valor).strip().replace('R$', '').replace(' ', '')
+        if ',' in valor_str:
+            valor_str = valor_str.replace('.', '').replace(',', '.')
+        return float(valor_str)
     
     def extrair_texto_pdf(self, arquivo_bytes):
         """Extrai texto de um PDF usando pdfplumber ou PyPDF2 fallback"""
@@ -244,8 +251,7 @@ class ProcessadorExtratos:
             for _, row in df.iterrows():
                 try:
                     descricao = str(row['descricao']).strip()
-                    val_str = str(row['valor']).replace('R$', '').replace(',', '.').strip()
-                    valor = float(val_str)
+                    valor = self._parsear_valor(row['valor'])
                     data = str(row['data'])
                     
                     categoria = self.categorizar_transacao(descricao, valor)

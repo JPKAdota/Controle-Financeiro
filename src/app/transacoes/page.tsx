@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
 interface Transaction {
     id: string;
@@ -35,16 +36,14 @@ export default function TransactionsPage() {
 
     const fetchData = async () => {
         try {
-            const res = await fetch("/api/transactions");
-            const data = await res.json();
+            const data = await apiFetch<Transaction[]>("/api/transactions");
             setTransactions(data || []);
         } catch (e) { console.error(e) } finally { setLoading(false) }
     };
 
     const fetchCategories = async () => {
         try {
-            const res = await fetch("/api/categories");
-            const data = await res.json();
+            const data = await apiFetch<Category[]>("/api/categories");
             setCategories(data || []);
         } catch (e) { console.error(e) }
     };
@@ -52,7 +51,7 @@ export default function TransactionsPage() {
     const handleDelete = async (id: string) => {
         if (!confirm("Excluir transação?")) return;
         try {
-            await fetch(`/api/transactions/${id}`, { method: "DELETE" });
+            await apiFetch(`/api/transactions/${id}`, { method: "DELETE" });
             setTransactions(transactions.filter(t => t.id !== id));
         } catch (e) { alert("Erro ao excluir") }
     };
@@ -63,7 +62,7 @@ export default function TransactionsPage() {
 
         try {
             setLoading(true);
-            await fetch("/api/transactions-all", { method: "DELETE" });
+            await apiFetch("/api/transactions-all", { method: "DELETE" });
             setTransactions([]);
         } catch (e) {
             alert("Erro ao excluir tudo");
@@ -79,7 +78,7 @@ export default function TransactionsPage() {
 
     const saveEdit = async (id: string) => {
         try {
-            await fetch(`/api/transactions/${id}`, {
+            await apiFetch(`/api/transactions/${id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ categoria: editCategory })

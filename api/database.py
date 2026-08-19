@@ -5,23 +5,34 @@ from supabase import create_client, Client
 load_dotenv()
 
 
+class DatabaseError(RuntimeError):
+    """Erro operacional ao acessar o banco de dados."""
+
+
 class DatabaseManager:
-    def __init__(self):
-        url: str = os.environ.get("SUPABASE_URL")
-        key: str = os.environ.get("SUPABASE_KEY")
+    def __init__(self, access_token: str | None = None):
+        url = os.environ.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_KEY")
         
         if not url or not key:
-            print("Aviso: SUPABASE_URL ou SUPABASE_KEY não definidos.")
             self.client = None
         else:
-            self.client: Client = create_client(url, key)
+            try:
+                self.client: Client | None = create_client(url, key)
+                if access_token and self.client:
+                    self.client.postgrest.auth(access_token)
+            except Exception as exc:
+                raise DatabaseError("Não foi possível conectar ao banco de dados.") from exc
+
+    def _require_client(self) -> Client:
+        if not self.client:
+            raise DatabaseError("Banco de dados não configurado.")
+        return self.client
 
     def save_transactions(self, transactions: list):
         """Salva uma lista de transações no Supabase"""
-        if not self.client:
-            return {"error": "Banco de dados não configurado"}
-            
         try:
+            client = self._require_client()
             # Prepara dados para inserção (garante que chaves batam com colunas do DB)
             data_to_insert = []
             for t in transactions:
@@ -44,53 +55,60 @@ class DatabaseManager:
                     "fonte": t['fonte']
                 })
             
-            response = self.client.table("transacoes").insert(data_to_insert).execute()
+            response = client.table("transacoes").insert(data_to_insert).execute()
             return response
-        except Exception as e:
-            raise Exception(f"Erro ao salvar no banco: {str(e)}")
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Erro ao salvar transações no banco de dados.") from exc
 
     def get_transactions(self):
         """Busca todas as transações"""
-        if not self.client:
-            return []
         try:
-            response = self.client.table("transacoes").select("*").order("data", desc=True).execute()
+            response = self._require_client().table("transacoes").select("*").order("data", desc=True).execute()
             return response.data
-        except Exception as e:
-            print(f"Erro ao buscar transações: {e}")
-            return []
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Erro ao buscar transações.") from exc
 
     # --- CATEGORIAS ---
     def get_categories(self):
-        if not self.client: return []
         try:
-            return self.client.table("categorias").select("*").execute().data
-        except: return []
+            return self._require_client().table("categorias").select("*").execute().data
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Erro ao buscar categorias.") from exc
 
     def add_category(self, nome, tipo):
-        if not self.client: return None
         try:
-            return self.client.table("categorias").insert({"nome": nome, "tipo": tipo}).execute()
-        except Exception as e:
-            raise e
+            return self._require_client().table("categorias").insert({"nome": nome, "tipo": tipo}).execute()
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Erro ao adicionar categoria.") from exc
 
     def delete_category(self, id):
-        if not self.client: return None
         try:
-            return self.client.table("categorias").delete().eq("id", id).execute()
-        except: return None
+            return self._require_client().table("categorias").delete().eq("id", id).execute()
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Erro ao remover categoria.") from exc
 
     def update_category(self, id, nome, tipo):
-        if not self.client: return None
         try:
-            return self.client.table("categorias").update({"nome": nome, "tipo": tipo}).eq("id", id).execute()
-        except: return None
+            return self._require_client().table("categorias").update({"nome": nome, "tipo": tipo}).eq("id", id).execute()
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Erro ao atualizar categoria.") from exc
 
     def add_manual_transaction(self, t):
-        if not self.client: return None
         try:
             # Convert date if needed, or assume backend receives YYYY-MM-DD
-            return self.client.table("transacoes").insert({
+            return self._require_client().table("transacoes").insert({
                 "data": t["data"],
                 "descricao": t["descricao"],
                 "valor": t["valor"],
@@ -99,30 +117,36 @@ class DatabaseManager:
                 "fonte": "Manual",
                 "data_vencimento": t.get("data_vencimento")
             }).execute()
-        except Exception as e:
-            raise e
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Erro ao adicionar transação.") from exc
 
     def delete_transaction(self, id):
-        if not self.client: return None
         try:
-            return self.client.table("transacoes").delete().eq("id", id).execute()
-        except: return None
+            return self._require_client().table("transacoes").delete().eq("id", id).execute()
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Erro ao remover transação.") from exc
 
     def delete_all_transactions(self):
-        if not self.client: return None
         try:
             # Delete all rows where id is not null (effectively all)
-            return self.client.table("transacoes").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
-        except Exception as e:
-            print(f"Erro ao deletar tudo: {e}")
-            return None
+            return self._require_client().table("transacoes").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Erro ao remover transações.") from exc
 
     def update_transaction(self, id, data):
-        if not self.client: return None
         try:
             # data is a dict with fields to update (e.g., {"categoria": "Nova"})
-            return self.client.table("transacoes").update(data).eq("id", id).execute()
-        except: return None
+            return self._require_client().table("transacoes").update(data).eq("id", id).execute()
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError("Erro ao atualizar transação.") from exc
 
     # --- DASHBOARD ---
     def get_dashboard_data(self):

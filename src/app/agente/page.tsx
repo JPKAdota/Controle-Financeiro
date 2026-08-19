@@ -28,6 +28,7 @@ import {
 } from "recharts";
 import ChatMessage from "@/components/ChatMessage";
 import MarketCard from "@/components/MarketCard";
+import { ApiError, apiFetch } from "@/lib/api";
 
 // ============ TYPES ============
 
@@ -59,6 +60,22 @@ interface HistoryPoint {
     date: number;
     close: number;
 }
+
+interface CryptoCoin {
+    symbol: string;
+    name: string;
+    price: number;
+    change: number;
+    changePercent: number;
+}
+
+interface Ticker {
+    symbol: string;
+    name: string;
+    type: string;
+}
+
+type MarketSubTab = "stocks" | "fiis" | "crypto" | "search";
 
 interface SimResult {
     parametros: {
@@ -162,8 +179,7 @@ function ChatTab() {
 
     useEffect(() => {
         // Carregar sugestões
-        fetch("/api/agent/suggestions")
-            .then((r) => r.json())
+        apiFetch<{ suggestions?: string[] }>("/api/agent/suggestions")
             .then((data) => setSuggestions(data.suggestions || []))
             .catch(() => {});
     }, []);
@@ -182,7 +198,7 @@ function ChatTab() {
         setIsLoading(true);
 
         try {
-            const response = await fetch("/api/agent/chat", {
+            const data = await apiFetch<{ response?: string }>("/api/agent/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -191,18 +207,20 @@ function ChatTab() {
                 }),
             });
 
-            const data = await response.json();
             const assistantMessage: Message = {
                 role: "assistant",
                 content: data.response || "Erro ao processar resposta.",
             };
             setMessages((prev) => [...prev, assistantMessage]);
-        } catch {
+        } catch (error) {
+            const message = error instanceof ApiError
+                ? error.message
+                : "❌ Erro de conexão. Verifique se o backend está rodando.";
             setMessages((prev) => [
                 ...prev,
                 {
                     role: "assistant",
-                    content: "❌ Erro de conexão. Verifique se o backend está rodando.",
+                    content: message,
                 },
             ]);
         } finally {
@@ -295,7 +313,7 @@ function ChatTab() {
 // ============ TAB: MERCADO ============
 
 function MercadoTab() {
-    const [activeSubTab, setActiveSubTab] = useState<"stocks" | "fiis" | "crypto" | "search">("stocks");
+    const [activeSubTab, setActiveSubTab] = useState<MarketSubTab>("stocks");
     const [quotes, setQuotes] = useState<Quote[]>([]);
     const [fiis, setFiis] = useState<Quote[]>([]);
     const [crypto, setCrypto] = useState<Quote[]>([]);
@@ -310,29 +328,24 @@ function MercadoTab() {
 
     // Search state
     const [searchQuery, setSearchQuery] = useState("");
-    const [searchResults, setSearchResults] = useState<{ symbol: string; name: string; type: string }[]>([]);
+    const [searchResults, setSearchResults] = useState<Ticker[]>([]);
     const [searching, setSearching] = useState(false);
 
     const fetchMarketData = useCallback(async () => {
         setLoading(true);
         try {
-            const [stocksRes, fiisRes, cryptoRes, indicatorsRes] = await Promise.all([
-                fetch("/api/market/quotes?symbols=PETR4,VALE3,ITUB4,MGLU3"),
-                fetch("/api/market/quotes?symbols=MXRF11,HGLG11,XPML11,KNRI11"),
-                fetch("/api/market/crypto?symbols=BTC,ETH,SOL"),
-                fetch("/api/market/indicators"),
+            const [stocksData, fiisData, cryptoData, indicatorsData] = await Promise.all([
+                apiFetch<{ quotes?: Quote[] }>("/api/market/quotes?symbols=PETR4,VALE3,ITUB4,MGLU3"),
+                apiFetch<{ quotes?: Quote[] }>("/api/market/quotes?symbols=MXRF11,HGLG11,XPML11,KNRI11"),
+                apiFetch<{ coins?: CryptoCoin[] }>("/api/market/crypto?symbols=BTC,ETH,SOL"),
+                apiFetch<{ indicators?: Record<string, Indicator> }>("/api/market/indicators"),
             ]);
-
-            const stocksData = await stocksRes.json();
-            const fiisData = await fiisRes.json();
-            const cryptoData = await cryptoRes.json();
-            const indicatorsData = await indicatorsRes.json();
 
             setQuotes(stocksData.quotes || []);
             setFiis(fiisData.quotes || []);
             
             // Map crypto coins to the Quote interface structure
-            const mappedCrypto = (cryptoData.coins || []).map((c: any) => ({
+            const mappedCrypto = (cryptoData.coins || []).map((c) => ({
                 symbol: c.symbol,
                 shortName: c.name,
                 longName: c.name,
@@ -358,10 +371,9 @@ function MercadoTab() {
 
     const fetchHistory = useCallback(async () => {
         try {
-            const res = await fetch(
+            const data = await apiFetch<{ history?: HistoryPoint[] }>(
                 `/api/market/history/${selectedSymbol}?range=${historyRange}`
             );
-            const data = await res.json();
             setHistory(data.history || []);
         } catch {
             setHistory([]);
@@ -384,8 +396,9 @@ function MercadoTab() {
         if (!searchQuery.trim()) return;
         setSearching(true);
         try {
-            const res = await fetch(`/api/market/tickers?search=${searchQuery}`);
-            const data = await res.json();
+            const data = await apiFetch<{ tickers?: Ticker[] }>(
+                `/api/market/tickers?search=${encodeURIComponent(searchQuery)}`
+            );
             setSearchResults(data.tickers || []);
         } catch {
             setSearchResults([]);
@@ -400,10 +413,8 @@ function MercadoTab() {
         try {
             // Verify if it is a crypto symbol or standard stock/FII
             const isCrypto = searchResults.find(t => t.symbol === symbol)?.type === "crypto";
-            let res;
             if (isCrypto) {
-                res = await fetch(`/api/market/crypto?symbols=${symbol}`);
-                const data = await res.json();
+                const data = await apiFetch<{ coins?: CryptoCoin[] }>(`/api/market/crypto?symbols=${symbol}`);
                 if (data.coins && data.coins.length > 0) {
                     const c = data.coins[0];
                     const quote: Quote = {
@@ -421,8 +432,7 @@ function MercadoTab() {
                     setSelectedSymbol(quote.symbol);
                 }
             } else {
-                res = await fetch(`/api/market/quotes?symbols=${symbol}`);
-                const data = await res.json();
+                const data = await apiFetch<{ quotes?: Quote[] }>(`/api/market/quotes?symbols=${symbol}`);
                 if (data.quotes && data.quotes.length > 0) {
                     const quote = data.quotes[0];
                     setCustomQuotes(prev => {
@@ -520,7 +530,7 @@ function MercadoTab() {
                     ].map((tab) => (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveSubTab(tab.id as any)}
+                            onClick={() => setActiveSubTab(tab.id as MarketSubTab)}
                             className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                                 activeSubTab === tab.id
                                     ? "bg-emerald-600 text-white"
@@ -697,7 +707,7 @@ function SimuladorTab() {
     const handleSimulate = async () => {
         setLoading(true);
         try {
-            const res = await fetch("/api/agent/simulate", {
+            const data = await apiFetch<SimResult>("/api/agent/simulate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -710,7 +720,6 @@ function SimuladorTab() {
                 }),
             });
 
-            const data = await res.json();
             if (data.serie) {
                 setResult(data);
             }

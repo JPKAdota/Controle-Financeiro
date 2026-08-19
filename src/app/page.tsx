@@ -13,6 +13,7 @@ import {
   CartesianGrid,
   Legend
 } from "recharts";
+import { apiFetch } from "@/lib/api";
 
 interface DashboardData {
   expenses_by_category: { name: string; value: number }[];
@@ -31,9 +32,9 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
 
   useEffect(() => {
-    fetch("/api/dashboard-charts")
-      .then((res) => res.json())
-      .then((data) => setData(data));
+    apiFetch<DashboardData>("/api/dashboard-charts")
+      .then(setData)
+      .catch(() => setData({ expenses_by_category: [], investments_evolution: [] }));
   }, []);
 
   if (!data) return <div className="text-center p-10">Carregando gráficos...</div>;

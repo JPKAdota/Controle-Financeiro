@@ -16,6 +16,25 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Agente IA local com Ollama
+
+O agente usa Ollama por padrão, sem chave de API externa. Instale o Ollama, inicie o serviço e baixe um modelo:
+
+```bash
+ollama pull llama3.2:3b
+ollama serve
+```
+
+No arquivo `.env`, mantenha:
+
+```env
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.2:3b
+```
+
+Para usar Gemini como alternativa, defina `AI_PROVIDER=gemini` e configure `GEMINI_API_KEY`.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

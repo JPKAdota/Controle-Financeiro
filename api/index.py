@@ -1,14 +1,16 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import Depends, FastAPI, UploadFile, File, HTTPException, Query, Request
 import sys
 import os
 
 # Adiciona o diretório atual ao path para que imports relativos funcionem na Vercel
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, Field
+from typing import List, Literal, Optional
 from processor import ProcessadorExtratos
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import io
 
 app = FastAPI()
@@ -20,23 +22,61 @@ from market_service import (
 )
 from chat_service import chat_with_agent, get_suggested_questions
 from simulator_service import simulate_investment, compare_scenarios
+from database import DatabaseError, DatabaseManager
+
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+auth_scheme = HTTPBearer(auto_error=False)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get(
+            "CORS_ORIGINS", "http://localhost:3000"
+        ).split(",")
+        if origin.strip()
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+@app.exception_handler(DatabaseError)
+async def database_error_handler(_: Request, exc: DatabaseError):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    if not credentials or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Autenticação obrigatória.")
+
+    try:
+        auth_client = DatabaseManager()._require_client()
+        user_response = auth_client.auth.get_user(credentials.credentials)
+        user = user_response.user
+        if not user:
+            raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.")
+        return {"id": user.id, "access_token": credentials.credentials}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.") from exc
+
+
+def get_user_database(user=Depends(get_current_user)):
+    return DatabaseManager(user["access_token"])
+
 class Transacao(BaseModel):
-    data: str
-    descricao: str
-    valor: float
-    categoria: str
-    tipo: str
-    fonte: str
-    data_vencimento: Optional[str] = None
+    data: str = Field(min_length=8, max_length=30)
+    descricao: str = Field(min_length=1, max_length=300)
+    valor: float = Field(allow_inf_nan=False)
+    categoria: str = Field(min_length=1, max_length=100)
+    tipo: Literal["Receita", "Despesa", "Investimento"]
+    fonte: str = Field(min_length=1, max_length=50)
+    data_vencimento: Optional[str] = Field(default=None, max_length=30)
 
 class ProcessResult(BaseModel):
     message: str
@@ -47,78 +87,69 @@ class ProcessResult(BaseModel):
 def health_check():
     return {"status": "ok", "version": "1.0.0"}
 
-from database import DatabaseManager
-
 @app.get("/api/transactions")
-def get_transactions():
-    db = DatabaseManager()
-    if not db.client:
-        return {"message": "Banco de dados não conectado", "data": []}
+def get_transactions(db=Depends(get_user_database)):
     return db.get_transactions()
 
 @app.get("/api/categories")
-def get_categories():
-    db = DatabaseManager()
+def get_categories(db=Depends(get_user_database)):
     return db.get_categories()
 
 class CategoryModel(BaseModel):
-    nome: str
-    tipo: str
+    nome: str = Field(min_length=1, max_length=100)
+    tipo: Literal["Despesa", "Receita", "Investimento"]
 
 @app.post("/api/categories")
-def add_category(cat: CategoryModel):
-    db = DatabaseManager()
+def add_category(cat: CategoryModel, db=Depends(get_user_database)):
     try:
         db.add_category(cat.nome, cat.tipo)
         return {"message": "Categoria adicionada"}
+    except DatabaseError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.delete("/api/categories/{id}")
-def delete_category(id: str):
-    db = DatabaseManager()
+def delete_category(id: str, db=Depends(get_user_database)):
     db.delete_category(id)
     return {"message": "Categoria removida"}
 
 @app.put("/api/categories/{id}")
-def update_category(id: str, cat: CategoryModel):
-    db = DatabaseManager()
+def update_category(id: str, cat: CategoryModel, db=Depends(get_user_database)):
     db.update_category(id, cat.nome, cat.tipo)
     return {"message": "Categoria atualizada"}
 
 @app.post("/api/transactions")
-def add_transaction(t: Transacao):
-    db = DatabaseManager()
+def add_transaction(t: Transacao, db=Depends(get_user_database)):
     try:
         # Convert Pydantic model to dict
         db.add_manual_transaction(t.dict())
         return {"message": "Transação adicionada"}
+    except DatabaseError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.delete("/api/transactions/{id}")
-def delete_transaction(id: str):
-    db = DatabaseManager()
+def delete_transaction(id: str, db=Depends(get_user_database)):
     db.delete_transaction(id)
     return {"message": "Transação removida"}
 
 @app.delete("/api/transactions-all")
-def delete_all_transactions():
-    db = DatabaseManager()
+def delete_all_transactions(db=Depends(get_user_database)):
     db.delete_all_transactions()
     return {"message": "Todas as transações foram removidas"}
 
 class UpdateTransactionModel(BaseModel):
-    categoria: Optional[str] = None
-    descricao: Optional[str] = None
-    valor: Optional[float] = None
-    data: Optional[str] = None
-    tipo: Optional[str] = None
-    data_vencimento: Optional[str] = None
+    categoria: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    descricao: Optional[str] = Field(default=None, min_length=1, max_length=300)
+    valor: Optional[float] = Field(default=None, allow_inf_nan=False)
+    data: Optional[str] = Field(default=None, min_length=8, max_length=30)
+    tipo: Optional[Literal["Receita", "Despesa", "Investimento"]] = None
+    data_vencimento: Optional[str] = Field(default=None, max_length=30)
 
 @app.put("/api/transactions/{id}")
-def update_transaction(id: str, t: UpdateTransactionModel):
-    db = DatabaseManager()
+def update_transaction(id: str, t: UpdateTransactionModel, db=Depends(get_user_database)):
     # Filter only provided fields
     data_to_update = {k: v for k, v in t.dict().items() if v is not None}
     if data_to_update:
@@ -126,36 +157,40 @@ def update_transaction(id: str, t: UpdateTransactionModel):
     return {"message": "Transação atualizada"}
 
 @app.get("/api/dashboard-charts")
-def get_dashboard_charts():
-    db = DatabaseManager()
+def get_dashboard_charts(db=Depends(get_user_database)):
     return db.get_dashboard_data()
 
 @app.post("/api/process-upload", response_model=ProcessResult)
-async def process_upload(file: UploadFile = File(...)):
+async def process_upload(file: UploadFile = File(...), db=Depends(get_user_database)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="Arquivo sem nome")
-    
-    contents = await file.read()
+
+    extension = os.path.splitext(file.filename)[1].lower()
+    if extension not in {".pdf", ".csv"}:
+        raise HTTPException(status_code=400, detail="Formato não suportado. Use PDF ou CSV.")
+
+    contents = await file.read(MAX_UPLOAD_SIZE + 1)
+    if len(contents) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="Arquivo excede o limite de 10 MB.")
+
     processador = ProcessadorExtratos()
-    db = DatabaseManager()
     
     try:
         transacoes = []
-        if file.filename.endswith('.pdf'):
+        if extension == ".pdf":
             transacoes = processador.processar_pdf(contents)
-        elif file.filename.endswith('.csv'):
+        elif extension == ".csv":
             transacoes = processador.processar_csv(contents)
-        else:
-            raise HTTPException(status_code=400, detail="Formato não suportado. Use PDF ou CSV.")
             
         # Salva no banco se estiver configurado
-        if db.client:
-            db.save_transactions(transacoes)
+        db.save_transactions(transacoes)
             
         return {
             "message": f"Processado com sucesso. {len(transacoes)} transações encontradas e salvas.",
             "transacoes": transacoes
         }
+    except (DatabaseError, HTTPException):
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -214,19 +249,18 @@ async def market_tickers(search: str = Query(default=""), type: str = Query(defa
 # --- CHAT IA ---
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=4000)
     context: Optional[dict] = None
-    history: Optional[list] = None
+    history: Optional[List[dict]] = Field(default=None, max_length=20)
 
 
 @app.post("/api/agent/chat")
-async def agent_chat(req: ChatRequest):
+async def agent_chat(req: ChatRequest, db=Depends(get_user_database)):
     """Chat com o assistente de investimentos IA."""
     # Se contexto não foi enviado, buscar dados do usuário automaticamente
     context = req.context
     if not context:
         try:
-            db = DatabaseManager()
             dashboard_data = db.get_dashboard_data()
             transactions = db.get_transactions()
             investments = [
@@ -240,11 +274,26 @@ async def agent_chat(req: ChatRequest):
         except Exception:
             context = {}
 
-    return await chat_with_agent(
+    result = await chat_with_agent(
         message=req.message,
         context=context,
         history=req.history,
     )
+
+    if result.get("error"):
+        status_by_error = {
+            "ollama_unavailable": 503,
+            "api_key_missing": 503,
+            "module_not_installed": 503,
+            "ollama_timeout": 504,
+            "rate_limited": 429,
+        }
+        raise HTTPException(
+            status_code=status_by_error.get(result["error"], 502),
+            detail=result.get("response", "Provedor de IA indisponível."),
+        )
+
+    return result
 
 
 @app.get("/api/agent/suggestions")
@@ -256,22 +305,17 @@ def agent_suggestions():
 # --- SIMULADOR ---
 
 class SimulateRequest(BaseModel):
-    aporte_inicial: float = 0
-    aporte_mensal: float = 0
-    taxa_anual: float = 12.0
-    meses: int = 12
-    indexador: str = "pre"
-    taxa_indexador: float = 0.0
+    aporte_inicial: float = Field(default=0, ge=0, allow_inf_nan=False)
+    aporte_mensal: float = Field(default=0, ge=0, allow_inf_nan=False)
+    taxa_anual: float = Field(default=12.0, ge=-100, allow_inf_nan=False)
+    meses: int = Field(default=12, ge=1, le=600)
+    indexador: Literal["pre", "cdi", "ipca"] = "pre"
+    taxa_indexador: float = Field(default=0.0, ge=-100, allow_inf_nan=False)
 
 
 @app.post("/api/agent/simulate")
 def agent_simulate(req: SimulateRequest):
     """Simula a evolução de um investimento."""
-    if req.meses < 1 or req.meses > 600:
-        raise HTTPException(status_code=400, detail="Período deve ser entre 1 e 600 meses")
-    if req.aporte_inicial < 0 or req.aporte_mensal < 0:
-        raise HTTPException(status_code=400, detail="Valores de aporte não podem ser negativos")
-
     return simulate_investment(
         aporte_inicial=req.aporte_inicial,
         aporte_mensal=req.aporte_mensal,
@@ -283,7 +327,7 @@ def agent_simulate(req: SimulateRequest):
 
 
 class CompareRequest(BaseModel):
-    scenarios: list[dict]
+    scenarios: List[dict] = Field(min_length=1, max_length=3)
 
 
 @app.post("/api/agent/compare")

@@ -16,6 +16,17 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Variáveis da Vercel
+
+Cadastre estas variáveis no projeto da Vercel, nos ambientes `Production`, `Preview` e `Development`, e faça um novo deploy:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://seu-projeto.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-chave-anon
+```
+
+As variáveis do arquivo `.env` local não são versionadas nem enviadas automaticamente para a Vercel.
+
 ## Agente IA local com Ollama
 
 O agente usa Ollama por padrão, sem chave de API externa. Instale o Ollama, inicie o serviço e baixe um modelo:

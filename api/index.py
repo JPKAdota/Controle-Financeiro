@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 from processor import ProcessadorExtratos
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import io
 
@@ -40,6 +40,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/", include_in_schema=False)
+def api_root():
+    frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    return RedirectResponse(url=frontend_url)
 
 
 @app.exception_handler(DatabaseError)

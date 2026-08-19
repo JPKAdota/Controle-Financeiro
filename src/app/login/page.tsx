@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabase, supabaseConfigError } from "@/lib/supabase";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -16,15 +16,26 @@ export default function LoginPage() {
         setLoading(true);
         setError("");
 
-        const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-
-        if (authError) {
-            setError(authError.message || "Não foi possível entrar.");
+        if (supabaseConfigError) {
+            setError(supabaseConfigError);
             setLoading(false);
             return;
         }
 
-        router.replace("/");
+        try {
+            const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+
+            if (authError) {
+                setError(authError.message || "Não foi possível entrar.");
+                setLoading(false);
+                return;
+            }
+
+            router.replace("/");
+        } catch {
+            setError("Não foi possível conectar ao Supabase. Verifique a configuração da Vercel.");
+            setLoading(false);
+        }
     };
 
     return (

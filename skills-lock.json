@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "skills": {
+    "expense-categorization": {
+      "source": "seb1n/awesome-ai-agent-skills",
+      "sourceType": "github",
+      "skillPath": "finance-and-accounting/expense-categorization/SKILL.md",
+      "computedHash": "806b353b65d7e32205861ddd4be618ba66d20321c30d98333cccc0d2bafaa4ba",
+      "installMode": "copy"
+    },
+    "expense-optimizer": {
+      "source": "openaccountant/skills",
+      "sourceType": "github",
+      "skillPath": "shared/expense-optimizer/SKILL.md",
+      "computedHash": "d49816e02aed61f8cdcb3cfa9475f051f5400ad0d8a44ce70fa5749e2b0ab42d",
+      "installMode": "copy"
+    },
+    "finance-manager": {
+      "source": "ailabs-393/ai-labs-claude-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills/finance-manager/SKILL.md",
+      "computedHash": "b9e7ad972e9831a9c4dbe848a781c5c7f9100f258f5b440b316e47dda8481e2b",
+      "installMode": "copy"
+    },
+    "lgpd-brasil": {
+      "source": "ericbsantana/llm-skills",
+      "sourceType": "github",
+      "skillPath": "skills/lgpd-brasil/SKILL.md",
+      "computedHash": "16c4d2af6b6648e2296321bc8f7edd5674cf9ba24420dc858ac4ea75a91d8bd8",
+      "installMode": "copy"
+    },
+    "parse-bank-statement-pdf": {
+      "source": "houfu/lavender-ledger",
+      "sourceType": "github",
+      "skillPath": "skills/pdf_parsing/SKILL.md",
+      "computedHash": "36ee8629aa947043acdc577f08d5f6243f110d309f3bbf9588012e2399f159d7",
+      "installMode": "copy"
+    },
+    "personal-finance-coach": {
+      "source": "curiositech/some_claude_skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/personal-finance-coach/SKILL.md",
+      "computedHash": "b1604620c802c224884d3174c9f0d40682c6f8c13488acb453dcf24dda25f385",
+      "installMode": "copy"
+    },
+    "yfinance-data": {
+      "source": "himself65/finance-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/market-analysis/skills/yfinance-data/SKILL.md",
+      "computedHash": "750aea542970ba0878c79c34b73025a85d7f6d827df85df05d0fc6e30c81f566",
+      "installMode": "copy"
+    }
+  }
+}

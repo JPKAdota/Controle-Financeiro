@@ -171,6 +171,7 @@ function ChatTab() {
     const [input, setInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const [suggestions, setSuggestions] = useState<string[]>([]);
+    const [privacyWarning, setPrivacyWarning] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = useCallback(() => {
@@ -179,8 +180,13 @@ function ChatTab() {
 
     useEffect(() => {
         // Carregar sugestões
-        apiFetch<{ suggestions?: string[] }>("/api/agent/suggestions")
-            .then((data) => setSuggestions(data.suggestions || []))
+        apiFetch<{ suggestions?: string[]; external?: boolean; warning?: string | null }>(
+            "/api/agent/suggestions",
+        )
+            .then((data) => {
+                setSuggestions(data.suggestions || []);
+                setPrivacyWarning(data.external ? data.warning || null : null);
+            })
             .catch(() => {});
     }, []);
 
@@ -243,6 +249,18 @@ function ChatTab() {
                     ⚠️ Assistente educacional — NÃO constitui recomendação de investimento
                 </p>
             </div>
+
+            {privacyWarning && (
+                <div
+                    role="alert"
+                    data-testid="privacy-warning"
+                    className="bg-red-500/10 border-b border-red-500/30 px-4 py-2"
+                >
+                    <p className="text-xs text-red-300 text-center">
+                        🔒 {privacyWarning}
+                    </p>
+                </div>
+            )}
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">

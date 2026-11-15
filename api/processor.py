@@ -1,9 +1,49 @@
 import pandas as pd
 from datetime import datetime
 import re
+import unicodedata
 import pdfplumber
 import PyPDF2
 import io
+
+
+def _remover_acentos(texto: str) -> str:
+    """Normaliza para minúsculas e remove acentos/diacríticos.
+
+    Extratos bancários quase sempre vêm SEM acento (ex: "SALARIO",
+    "DEPOSITO"), então a comparação de categorização precisa ignorar
+    acentuação dos dois lados para não perder casos óbvios.
+    """
+    nfkd = unicodedata.normalize("NFKD", texto.lower())
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+# Prefixos comuns de PIX/TED/DOC (já sem acento, comparados após normalização).
+# O que sobra depois de remover o prefixo é o nome do destinatário/remetente -
+# é isso que realmente identifica a transação de forma recorrente, já que
+# "supermercado"/"uber"/etc nunca aparecem no nome de uma pessoa física.
+_PREFIXOS_TRANSFERENCIA = [
+    r'^pix enviado para\s+',
+    r'^pix recebido de\s+',
+    r'^pix credito\s+',
+    r'^pix debito\s+',
+    r'^ted enviado para\s+',
+    r'^ted recebido de\s+',
+    r'^doc enviado para\s+',
+    r'^doc recebido de\s+',
+    r'^transferencia enviada para\s+',
+    r'^transferencia recebida de\s+',
+]
+
+
+def extrair_padrao_regra(descricao: str) -> str:
+    """Extrai o "padrão" de uma descrição para usar como chave de regra de
+    categorização aprendida (remove prefixos de PIX/TED/DOC, mantém o nome)."""
+    normalizado = _remover_acentos(descricao)
+    for prefixo in _PREFIXOS_TRANSFERENCIA:
+        normalizado = re.sub(prefixo, '', normalizado)
+    return normalizado.strip()
+
 
 class ProcessadorExtratos:
     def __init__(self):
@@ -15,18 +55,26 @@ class ProcessadorExtratos:
             'Saúde': ['farmacia', 'drogaria', 'médico', 'hospital', 'plano de saúde', 'academia', 'clinica', 'dentista'],
             'Educação': ['escola', 'faculdade', 'curso', 'livraria', 'material escolar', 'universidade', 'mensalidade'],
             'Investimentos': ['rendimento', 'dividendo', 'aplicação', 'tesouro', 'ação', 'fii', 'investimento', 'cdb', 'lci'],
-            'Receita': ['salário', 'pagamento', 'transferência recebida', 'depósito', 'rendimento']
+            # Nota: 'pagamento' foi removida daqui de propósito - é ambígua
+            # ("recebi um pagamento" vs "paguei uma fatura") e classificava
+            # despesas como Receita (ex: "Pagamento Fatura" de cartão).
+            'Receita': ['salário', 'transferência recebida', 'depósito', 'rendimento', 'pagamento recebido']
         }
-    
+        # Pré-computa as palavras-chave sem acento uma única vez.
+        self._categorias_normalizadas = {
+            categoria: [_remover_acentos(palavra) for palavra in palavras_chave]
+            for categoria, palavras_chave in self.categorias_padrao.items()
+        }
+
     def categorizar_transacao(self, descricao, valor):
         """Categoriza automaticamente uma transação baseada na descrição"""
-        desc_lower = descricao.lower()
-        
-        for categoria, palavras_chave in self.categorias_padrao.items():
+        desc_normalizada = _remover_acentos(descricao)
+
+        for categoria, palavras_chave in self._categorias_normalizadas.items():
             for palavra in palavras_chave:
-                if palavra in desc_lower:
+                if palavra in desc_normalizada:
                     return categoria
-        
+
         return "A Categorizar"
 
     @staticmethod
@@ -271,3 +319,61 @@ class ProcessadorExtratos:
 
         except Exception as e:
             raise Exception(f"Erro ao processar CSV: {str(e)}")
+
+    def processar_ofx(self, arquivo_bytes):
+        """Processa um arquivo OFX/QFX (formato padrão de extrato bancário).
+
+        OFX é SGML/XML simples: cada transação é um bloco <STMTTRN>...</STMTTRN>
+        com tags como <TRNAMT>, <DTPOSTED> e <MEMO>/<NAME>. Praticamente todo
+        banco brasileiro exporta nesse formato, e ele é muito mais confiável
+        que extrair texto de PDF (sem depender de layout de página).
+        """
+        try:
+            texto = arquivo_bytes.decode('utf-8', errors='ignore')
+
+            blocos = re.findall(r'<STMTTRN>(.*?)</STMTTRN>', texto, re.DOTALL | re.IGNORECASE)
+            if not blocos:
+                raise Exception("Nenhuma transação encontrada (tag <STMTTRN> não localizada no arquivo).")
+
+            def _tag(bloco, nome):
+                m = re.search(rf'<{nome}>\s*([^\r\n<]+)', bloco, re.IGNORECASE)
+                return m.group(1).strip() if m else None
+
+            transacoes = []
+            for bloco in blocos:
+                valor_str = _tag(bloco, 'TRNAMT')
+                data_str = _tag(bloco, 'DTPOSTED')
+                descricao = _tag(bloco, 'MEMO') or _tag(bloco, 'NAME') or 'Sem descrição'
+
+                if not valor_str or not data_str:
+                    continue
+
+                try:
+                    valor = float(valor_str)
+                except ValueError:
+                    continue
+
+                # DTPOSTED vem como YYYYMMDD[HHMMSS][[-3:BRT]] -> extrai só a data
+                match_data = re.match(r'(\d{4})(\d{2})(\d{2})', data_str)
+                if not match_data:
+                    continue
+                ano, mes, dia = match_data.groups()
+
+                categoria = self.categorizar_transacao(descricao, valor)
+
+                transacoes.append({
+                    'data': f"{dia}/{mes}/{ano}",
+                    'descricao': descricao,
+                    'valor': valor,
+                    'categoria': categoria,
+                    'tipo': 'Receita' if valor > 0 else 'Despesa',
+                    'fonte': 'OFX'
+                })
+
+            if not transacoes:
+                raise Exception("Nenhuma transação válida encontrada no arquivo OFX.")
+
+            return transacoes
+
+        except Exception as e:
+            raise Exception(f"Erro ao processar OFX: {str(e)}")

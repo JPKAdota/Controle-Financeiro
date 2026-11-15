@@ -9,14 +9,25 @@ interface Category {
     tipo: string;
 }
 
+interface Budget {
+    id: string;
+    categoria: string;
+    valor_limite: number;
+}
+
 export default function CategoriesPage() {
     const [categories, setCategories] = useState<Category[]>([]);
     const [formData, setFormData] = useState({ nome: "", tipo: "Despesa" });
     const [editingId, setEditingId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
 
+    const [budgets, setBudgets] = useState<Budget[]>([]);
+    const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>({});
+    const [savingBudget, setSavingBudget] = useState<string | null>(null);
+
     useEffect(() => {
         fetchCategories();
+        fetchBudgets();
     }, []);
 
     const fetchCategories = async () => {
@@ -27,6 +38,49 @@ export default function CategoriesPage() {
             console.error("Erro ao buscar categorias", error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchBudgets = async () => {
+        try {
+            const data = await apiFetch<Budget[]>("/api/budgets");
+            setBudgets(data || []);
+        } catch (error) {
+            console.error("Erro ao buscar orçamentos", error);
+        }
+    };
+
+    const getBudgetFor = (nome: string) => budgets.find((b) => b.categoria === nome);
+
+    const handleSaveBudget = async (categoria: string) => {
+        const valorStr = budgetInputs[categoria];
+        if (valorStr === undefined) return; // nada digitado, não faz nada
+
+        setSavingBudget(categoria);
+        try {
+            const valor = parseFloat(valorStr.replace(",", "."));
+            if (!valorStr.trim() || isNaN(valor) || valor <= 0) {
+                // Campo vazio ou zero: remove o orçamento, se existir
+                if (getBudgetFor(categoria)) {
+                    await apiFetch(`/api/budgets/${encodeURIComponent(categoria)}`, { method: "DELETE" });
+                }
+            } else {
+                await apiFetch("/api/budgets", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ categoria, valor_limite: valor }),
+                });
+            }
+            await fetchBudgets();
+            setBudgetInputs((prev) => {
+                const next = { ...prev };
+                delete next[categoria];
+                return next;
+            });
+        } catch (error) {
+            alert("Erro ao salvar orçamento");
+        } finally {
+            setSavingBudget(null);
         }
     };
 
@@ -158,6 +212,45 @@ export default function CategoriesPage() {
                         <li className="px-6 py-4 text-center text-gray-500">Nenhuma categoria encontrada.</li>
                     )}
                 </ul>
+            </div>
+
+            {/* Orçamentos Mensais */}
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
+                <h2 className="text-lg font-medium mb-1 text-gray-900 dark:text-gray-100">Orçamentos Mensais</h2>
+                <p className="text-sm text-gray-500 mb-4">
+                    Defina um limite mensal por categoria de despesa. O dashboard avisa quando você passar do limite. Deixe em branco e salve para remover o limite.
+                </p>
+                <div className="space-y-3">
+                    {categories.filter((c) => c.tipo === "Despesa").map((cat) => {
+                        const budget = getBudgetFor(cat.nome);
+                        const value = budgetInputs[cat.nome] ?? (budget ? String(budget.valor_limite) : "");
+                        return (
+                            <div key={cat.id} className="flex items-center gap-3">
+                                <span className="flex-1 text-sm text-gray-700 dark:text-gray-300">{cat.nome}</span>
+                                <span className="text-gray-400 text-sm">R$</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    placeholder="Sem limite"
+                                    value={value}
+                                    onChange={(e) => setBudgetInputs({ ...budgetInputs, [cat.nome]: e.target.value })}
+                                    className="w-32 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-1.5 text-sm"
+                                />
+                                <button
+                                    onClick={() => handleSaveBudget(cat.nome)}
+                                    disabled={savingBudget === cat.nome || budgetInputs[cat.nome] === undefined}
+                                    className="text-indigo-600 hover:text-indigo-800 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    {savingBudget === cat.nome ? "..." : "Salvar"}
+                                </button>
+                            </div>
+                        );
+                    })}
+                    {categories.filter((c) => c.tipo === "Despesa").length === 0 && (
+                        <p className="text-sm text-gray-500">Nenhuma categoria de despesa cadastrada.</p>
+                    )}
+                </div>
             </div>
         </div>
     );

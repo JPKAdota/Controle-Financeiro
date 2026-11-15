@@ -14,6 +14,29 @@ AI_PROVIDER = os.environ.get("AI_PROVIDER", "ollama").lower()
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
 
+# Aviso de privacidade: com Gemini, o resumo financeiro (receitas, despesas,
+# saldo e investimentos) sai da máquina e vai para os servidores do Google.
+EXTERNAL_PROVIDER_WARNING = (
+    "Com AI_PROVIDER=gemini, suas mensagens e um resumo dos seus dados financeiros "
+    "(receitas, despesas, saldo e investimentos) são enviados ao Google. No plano "
+    "gratuito da API, o Google pode usar esse conteúdo para melhorar seus produtos. "
+    "Use AI_PROVIDER=ollama para manter tudo no seu computador."
+)
+
+if AI_PROVIDER == "gemini":
+    # Sem emoji: consoles do Windows (cp1252) quebram com UnicodeEncodeError no import.
+    print(f"[AVISO DE PRIVACIDADE] {EXTERNAL_PROVIDER_WARNING}")
+
+
+def get_provider_info() -> dict:
+    """Informa ao frontend qual provedor está ativo e se os dados saem da máquina."""
+    is_external = AI_PROVIDER == "gemini"
+    return {
+        "provider": AI_PROVIDER,
+        "external": is_external,
+        "warning": EXTERNAL_PROVIDER_WARNING if is_external else None,
+    }
+
 # Flag para saber se o SDK está disponível
 _genai_available = False
 _client = None

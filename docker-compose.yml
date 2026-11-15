@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: controle-financeiro-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: controle_financeiro
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      # Só aceita conexões da própria máquina (não expõe o banco na rede/Wi-Fi).
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - controle_financeiro_data:/var/lib/postgresql/data
+      - ./api/scripts/init_local.sql:/docker-entrypoint-initdb.d/init_local.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d controle_financeiro"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  controle_financeiro_data:

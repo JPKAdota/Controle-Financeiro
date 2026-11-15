@@ -11,11 +11,13 @@ interface Transaction {
     valor: number;
     categoria: string;
     tipo: string;
+    data_vencimento?: string | null;
 }
 
 interface Category {
     id: string;
     nome: string;
+    tipo: string;
 }
 
 export default function TransactionsPage() {
@@ -28,6 +30,22 @@ export default function TransactionsPage() {
     // Search & Filter state
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedMonth, setSelectedMonth] = useState("Todos");
+    const [viewMode, setViewMode] = useState<"Todas" | "Despesas" | "Receitas" | "Investimentos">("Todas");
+    const [selectedCategory, setSelectedCategory] = useState("Todas");
+    const [selectedType, setSelectedType] = useState("Todos");
+
+    // New manual transaction form state
+    const [showNewForm, setShowNewForm] = useState(false);
+    const [savingNew, setSavingNew] = useState(false);
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const [newTx, setNewTx] = useState({
+        data: todayIso,
+        descricao: "",
+        valor: "",
+        categoria: "",
+        tipo: "Despesa",
+        data_vencimento: "",
+    });
 
     useEffect(() => {
         fetchData();
@@ -46,6 +64,44 @@ export default function TransactionsPage() {
             const data = await apiFetch<Category[]>("/api/categories");
             setCategories(data || []);
         } catch (e) { console.error(e) }
+    };
+
+    const handleCategoryChange = (nome: string) => {
+        const cat = categories.find((c) => c.nome === nome);
+        setNewTx({ ...newTx, categoria: nome, tipo: cat?.tipo || newTx.tipo });
+    };
+
+    const handleAddTransaction = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const valorNum = parseFloat(newTx.valor.replace(",", "."));
+        if (!newTx.categoria) { alert("Selecione uma categoria"); return; }
+        if (isNaN(valorNum) || valorNum <= 0) { alert("Informe um valor válido"); return; }
+
+        const valorComSinal = newTx.tipo === "Receita" ? Math.abs(valorNum) : -Math.abs(valorNum);
+
+        setSavingNew(true);
+        try {
+            await apiFetch("/api/transactions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    data: newTx.data,
+                    descricao: newTx.descricao,
+                    valor: valorComSinal,
+                    categoria: newTx.categoria,
+                    tipo: newTx.tipo,
+                    fonte: "Manual",
+                    data_vencimento: newTx.data_vencimento || null,
+                }),
+            });
+            setNewTx({ data: todayIso, descricao: "", valor: "", categoria: "", tipo: "Despesa", data_vencimento: "" });
+            setShowNewForm(false);
+            fetchData();
+        } catch (e) {
+            alert("Erro ao adicionar transação");
+        } finally {
+            setSavingNew(false);
+        }
     };
 
     const handleDelete = async (id: string) => {
@@ -127,7 +183,15 @@ export default function TransactionsPage() {
             if (formatted !== selectedMonth) matchesMonth = false;
         }
 
-        return matchesSearch && matchesMonth;
+        const matchesCategory = selectedCategory === "Todas" || (t.categoria || "A Categorizar") === selectedCategory;
+        const matchesType = selectedType === "Todos" || t.tipo === selectedType;
+
+        let matchesViewMode = true;
+        if (viewMode === "Despesas") matchesViewMode = t.tipo === "Despesa" && t.categoria !== "Investimentos";
+        else if (viewMode === "Receitas") matchesViewMode = t.tipo === "Receita" && t.categoria !== "Investimentos";
+        else if (viewMode === "Investimentos") matchesViewMode = t.categoria === "Investimentos";
+
+        return matchesSearch && matchesMonth && matchesCategory && matchesType && matchesViewMode;
     });
 
     // 3. Group by Month
@@ -151,12 +215,15 @@ export default function TransactionsPage() {
     });
 
     // --- Totals Calculation ---
+    // Investimentos (aportes/resgates) não entram aqui - são movimentação de
+    // patrimônio, não "receita"/"despesa" de consumo, e já têm seu próprio
+    // total na aba Investimentos.
     const totalReceitas = filteredTransactions
-        .filter(t => t.tipo === 'Receita')
+        .filter(t => t.tipo === 'Receita' && t.categoria !== 'Investimentos')
         .reduce((acc, t) => acc + Math.abs(Number(t.valor)), 0);
 
     const totalDespesas = filteredTransactions
-        .filter(t => t.tipo === 'Despesa')
+        .filter(t => t.tipo === 'Despesa' && t.categoria !== 'Investimentos')
         .reduce((acc, t) => acc + Math.abs(Number(t.valor)), 0);
 
     const saldo = totalReceitas - totalDespesas;
@@ -169,6 +236,25 @@ export default function TransactionsPage() {
                     <span className="text-gray-500 text-sm">{filteredTransactions.length} registros exibidos</span>
                 </div>
 
+                {/* Quick view tabs */}
+                <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
+                    {(["Todas", "Receitas", "Despesas", "Investimentos"] as const).map((mode) => (
+                        <button
+                            key={mode}
+                            onClick={() => setViewMode(mode)}
+                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
+                                viewMode === mode
+                                    ? "bg-indigo-600 text-white shadow"
+                                    : "text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+                            }`}
+                        >
+                            {mode}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div className="flex flex-col md:flex-row justify-end items-center gap-4">
                 <div className="flex flex-col md:flex-row gap-4 w-full md:w-auto items-center">
 
                     {/* Month Selector */}
@@ -180,6 +266,31 @@ export default function TransactionsPage() {
                         <option value="Todos">Todos os Meses</option>
                         {availableMonths.map(m => (
                             <option key={m} value={m}>{m}</option>
+                        ))}
+                    </select>
+
+                    {/* Type Filter */}
+                    <select
+                        value={selectedType}
+                        onChange={(e) => setSelectedType(e.target.value)}
+                        className="block w-full md:w-40 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2"
+                    >
+                        <option value="Todos">Todos os Tipos</option>
+                        <option value="Receita">Receita</option>
+                        <option value="Despesa">Despesa</option>
+                        <option value="Investimento">Investimento</option>
+                    </select>
+
+                    {/* Category Filter */}
+                    <select
+                        value={selectedCategory}
+                        onChange={(e) => setSelectedCategory(e.target.value)}
+                        className="block w-full md:w-48 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2"
+                    >
+                        <option value="Todas">Todas as Categorias</option>
+                        <option value="A Categorizar">A Categorizar</option>
+                        {categories.map(c => (
+                            <option key={c.id} value={c.nome}>{c.nome}</option>
                         ))}
                     </select>
 
@@ -198,6 +309,13 @@ export default function TransactionsPage() {
                     </div>
 
                     <button
+                        onClick={() => setShowNewForm(!showNewForm)}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold text-sm shadow-md transition whitespace-nowrap"
+                    >
+                        {showNewForm ? "Cancelar" : "+ Nova Transação"}
+                    </button>
+
+                    <button
                         onClick={handleDeleteAll}
                         className="bg-red-600 hover:bg-red-800 text-white px-4 py-2 rounded-md font-bold text-sm shadow-md transition whitespace-nowrap hidden md:block"
                         title="Excluir tudo"
@@ -206,6 +324,86 @@ export default function TransactionsPage() {
                     </button>
                 </div>
             </div>
+
+            {/* New Transaction Form */}
+            {showNewForm && (
+                <form onSubmit={handleAddTransaction} className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow flex flex-wrap gap-4 items-end">
+                    <div className="w-40">
+                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Data</label>
+                        <input
+                            type="date"
+                            required
+                            value={newTx.data}
+                            onChange={(e) => setNewTx({ ...newTx, data: e.target.value })}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2 text-sm"
+                        />
+                    </div>
+                    <div className="flex-1 min-w-[200px]">
+                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Descrição</label>
+                        <input
+                            type="text"
+                            required
+                            value={newTx.descricao}
+                            onChange={(e) => setNewTx({ ...newTx, descricao: e.target.value })}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2 text-sm"
+                        />
+                    </div>
+                    <div className="w-36">
+                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Valor (R$)</label>
+                        <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            required
+                            value={newTx.valor}
+                            onChange={(e) => setNewTx({ ...newTx, valor: e.target.value })}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2 text-sm"
+                        />
+                    </div>
+                    <div className="w-44">
+                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Categoria</label>
+                        <select
+                            required
+                            value={newTx.categoria}
+                            onChange={(e) => handleCategoryChange(e.target.value)}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2 text-sm"
+                        >
+                            <option value="">Selecione...</option>
+                            {categories.map((c) => (
+                                <option key={c.id} value={c.nome}>{c.nome}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="w-36">
+                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Tipo</label>
+                        <select
+                            value={newTx.tipo}
+                            onChange={(e) => setNewTx({ ...newTx, tipo: e.target.value })}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2 text-sm"
+                        >
+                            <option value="Despesa">Despesa</option>
+                            <option value="Receita">Receita</option>
+                            <option value="Investimento">Investimento</option>
+                        </select>
+                    </div>
+                    <div className="w-40">
+                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Vencimento (opcional)</label>
+                        <input
+                            type="date"
+                            value={newTx.data_vencimento}
+                            onChange={(e) => setNewTx({ ...newTx, data_vencimento: e.target.value })}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white p-2 text-sm"
+                        />
+                    </div>
+                    <button
+                        type="submit"
+                        disabled={savingNew}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold text-sm shadow-md transition disabled:opacity-50"
+                    >
+                        {savingNew ? "Salvando..." : "Adicionar"}
+                    </button>
+                </form>
+            )}
 
             {/* Summary Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

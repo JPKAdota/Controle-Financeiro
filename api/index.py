@@ -10,7 +10,6 @@ from typing import List, Literal, Optional
 from processor import ProcessadorExtratos
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import io
 
 app = FastAPI()
@@ -20,12 +19,11 @@ from market_service import (
     get_stock_quotes, get_macro_indicators, get_stock_history,
     get_stock_dividends, get_fii_dividends, get_crypto_quotes, search_tickers
 )
-from chat_service import chat_with_agent, get_suggested_questions
+from chat_service import chat_with_agent, get_provider_info, get_suggested_questions
 from simulator_service import simulate_investment, compare_scenarios
 from database import DatabaseError, DatabaseManager
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
-auth_scheme = HTTPBearer(auto_error=False)
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,27 +51,9 @@ async def database_error_handler(_: Request, exc: DatabaseError):
     return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
-):
-    if not credentials or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Autenticação obrigatória.")
-
-    try:
-        auth_client = DatabaseManager()._require_client()
-        user_response = auth_client.auth.get_user(credentials.credentials)
-        user = user_response.user
-        if not user:
-            raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.")
-        return {"id": user.id, "access_token": credentials.credentials}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.") from exc
-
-
-def get_user_database(user=Depends(get_current_user)):
-    return DatabaseManager(user["access_token"])
+def get_user_database():
+    # App local, single-user: sem autenticação, uma única instância de banco.
+    return DatabaseManager()
 
 class Transacao(BaseModel):
     data: str = Field(min_length=8, max_length=30)
@@ -125,6 +105,42 @@ def update_category(id: str, cat: CategoryModel, db=Depends(get_user_database)):
     db.update_category(id, cat.nome, cat.tipo)
     return {"message": "Categoria atualizada"}
 
+# --- REGRAS DE CATEGORIZAÇÃO APRENDIDAS ---
+
+@app.get("/api/category-rules")
+def get_category_rules(db=Depends(get_user_database)):
+    return db.get_category_rules()
+
+@app.delete("/api/category-rules/{id}")
+def delete_category_rule(id: str, db=Depends(get_user_database)):
+    db.delete_category_rule(id)
+    return {"message": "Regra removida"}
+
+# --- ORÇAMENTOS ---
+
+class BudgetModel(BaseModel):
+    categoria: str = Field(min_length=1, max_length=100)
+    valor_limite: float = Field(ge=0, allow_inf_nan=False)
+
+@app.get("/api/budgets")
+def get_budgets(db=Depends(get_user_database)):
+    return db.get_budgets()
+
+@app.post("/api/budgets")
+def set_budget(b: BudgetModel, db=Depends(get_user_database)):
+    try:
+        db.set_budget(b.categoria, b.valor_limite)
+        return {"message": "Orçamento salvo"}
+    except DatabaseError:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/budgets/{categoria}")
+def delete_budget(categoria: str, db=Depends(get_user_database)):
+    db.delete_budget(categoria)
+    return {"message": "Orçamento removido"}
+
 @app.post("/api/transactions")
 def add_transaction(t: Transacao, db=Depends(get_user_database)):
     try:
@@ -163,8 +179,11 @@ def update_transaction(id: str, t: UpdateTransactionModel, db=Depends(get_user_d
     return {"message": "Transação atualizada"}
 
 @app.get("/api/dashboard-charts")
-def get_dashboard_charts(db=Depends(get_user_database)):
-    return db.get_dashboard_data()
+def get_dashboard_charts(
+    month: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    db=Depends(get_user_database),
+):
+    return db.get_dashboard_data(month=month)
 
 @app.post("/api/process-upload", response_model=ProcessResult)
 async def process_upload(file: UploadFile = File(...), db=Depends(get_user_database)):
@@ -172,8 +191,8 @@ async def process_upload(file: UploadFile = File(...), db=Depends(get_user_datab
         raise HTTPException(status_code=400, detail="Arquivo sem nome")
 
     extension = os.path.splitext(file.filename)[1].lower()
-    if extension not in {".pdf", ".csv"}:
-        raise HTTPException(status_code=400, detail="Formato não suportado. Use PDF ou CSV.")
+    if extension not in {".pdf", ".csv", ".ofx", ".qfx"}:
+        raise HTTPException(status_code=400, detail="Formato não suportado. Use PDF, CSV ou OFX.")
 
     contents = await file.read(MAX_UPLOAD_SIZE + 1)
     if len(contents) > MAX_UPLOAD_SIZE:
@@ -187,12 +206,21 @@ async def process_upload(file: UploadFile = File(...), db=Depends(get_user_datab
             transacoes = processador.processar_pdf(contents)
         elif extension == ".csv":
             transacoes = processador.processar_csv(contents)
+        elif extension in (".ofx", ".qfx"):
+            transacoes = processador.processar_ofx(contents)
             
-        # Salva no banco se estiver configurado
-        db.save_transactions(transacoes)
-            
+        # Salva no banco, ignorando duplicatas exatas (mesmo extrato reimportado)
+        resultado_save = db.save_transactions(transacoes) or {}
+        inseridas = resultado_save.get("inseridas", len(transacoes))
+        duplicadas = resultado_save.get("duplicadas", 0)
+
+        mensagem = f"Processado com sucesso. {len(transacoes)} transações encontradas, {inseridas} inseridas"
+        if duplicadas:
+            mensagem += f", {duplicadas} duplicadas ignoradas"
+        mensagem += "."
+
         return {
-            "message": f"Processado com sucesso. {len(transacoes)} transações encontradas e salvas.",
+            "message": mensagem,
             "transacoes": transacoes
         }
     except (DatabaseError, HTTPException):
@@ -305,7 +333,7 @@ async def agent_chat(req: ChatRequest, db=Depends(get_user_database)):
 @app.get("/api/agent/suggestions")
 def agent_suggestions():
     """Retorna sugestões de perguntas para o chat."""
-    return {"suggestions": get_suggested_questions()}
+    return {"suggestions": get_suggested_questions(), **get_provider_info()}
 
 
 # --- SIMULADOR ---

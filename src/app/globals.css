@@ -16,6 +16,33 @@
   }
 }
 
+/* Tokens dos gráficos — paleta validada (contraste e daltonismo) para cada modo */
+:root {
+  --viz-receita: #008300;
+  --viz-despesa: #e34948;
+  --viz-invest: #2a78d6;
+  --viz-pending: #b5b3ab;
+  --viz-grid: #e1e0d9;
+  --viz-axis: #c3c2b7;
+  --viz-muted: #6b6a65;
+  --viz-hover: rgba(11, 11, 11, 0.04);
+  --viz-surface: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --viz-receita: #0ca30c;
+    --viz-despesa: #e66767;
+    --viz-invest: #3987e5;
+    --viz-pending: #5f5e5a;
+    --viz-grid: #374151;
+    --viz-axis: #4b5563;
+    --viz-muted: #9ca3af;
+    --viz-hover: rgba(255, 255, 255, 0.05);
+    --viz-surface: #1f2937;
+  }
+}
+
 body {
   color: rgb(var(--foreground-rgb));
   background: rgb(var(--background-start-rgb));

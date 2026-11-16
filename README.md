@@ -27,7 +27,7 @@ Isso sobe um Postgres na porta `5432` e já aplica o schema (`api/scripts/init_l
 Copie `.env.example` para `.env` e ajuste se necessário. Por padrão:
 
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/controle_financeiro
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/controle_financeiro
 ```
 
 ### 3. Backend (FastAPI)
@@ -49,7 +49,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result. Em desenvolvimento, o Next já faz proxy de `/api/*` para `http://127.0.0.1:8000` (ver `next.config.mjs`).
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000) with your browser to see the result. Em desenvolvimento, o Next já faz proxy de `/api/*` para `http://127.0.0.1:8000` (ver `next.config.mjs`).
 
 O app não tem tela de login: é uso pessoal, single-user, tudo roda na sua máquina.
 

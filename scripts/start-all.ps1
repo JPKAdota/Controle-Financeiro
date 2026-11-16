@@ -79,4 +79,4 @@ Start-Process powershell -ArgumentList @(
 )
 
 Write-Host ""
-Write-Host "Tudo iniciado! Em alguns segundos, abra http://localhost:3000"
+Write-Host "Tudo iniciado! Em alguns segundos, abra http://127.0.0.1:3000"
